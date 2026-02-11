@@ -29,7 +29,7 @@ class VADConfig:
 @dataclass
 class STTConfig:
     model_size: str = "small"
-    language: str = "fr"
+    language: str | None = None  # None = auto-detect language
     beam_size: int = 3
     cpu_threads: int = 4
     compute_type: str = "auto"
@@ -44,3 +44,4 @@ class UIConfig:
     fade_duration_ms: int = 1000
     window_width_ratio: float = 0.6
     bottom_margin: int = 80
+    streaming_display: bool = True  # Display words progressively

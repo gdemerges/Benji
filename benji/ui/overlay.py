@@ -10,11 +10,13 @@ from benji.config import UIConfig, IS_MACOS, IS_WINDOWS
 
 class SubtitleOverlay(QWidget):
     new_text_signal = pyqtSignal(str)
+    new_word_signal = pyqtSignal(dict)
 
     def __init__(self, display_queue: Queue, config: UIConfig = None):
         super().__init__()
         self.display_queue = display_queue
         self.config = config or UIConfig()
+        self.current_text = []  # For streaming mode
 
         # Window flags (cross-platform)
         self.setWindowFlags(
@@ -64,8 +66,9 @@ class SubtitleOverlay(QWidget):
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self._start_fade)
 
-        # Signal connection
+        # Signal connections
         self.new_text_signal.connect(self._update_text)
+        self.new_word_signal.connect(self._update_word)
 
         self.show()
         self._make_click_through()
@@ -89,10 +92,28 @@ class SubtitleOverlay(QWidget):
 
     def _click_through_macos(self):
         try:
+            import ctypes
+            import ctypes.util
             from AppKit import NSApp
+
+            # Load CoreGraphics
+            cg_path = ctypes.util.find_library("CoreGraphics")
+            if not cg_path:
+                print("[UI] CoreGraphics not found")
+                return
+            cg = ctypes.CDLL(cg_path)
+
+            # CGWindowLevel constants
+            kCGMaximumWindowLevelKey = ctypes.c_int(13)
+            CGShieldingWindowLevel = cg.CGShieldingWindowLevel
+            CGShieldingWindowLevel.restype = ctypes.c_int32
+
+            max_level = CGShieldingWindowLevel()
+
             for ns_window in NSApp.windows():
                 ns_window.setIgnoresMouseEvents_(True)
-                ns_window.setLevel_(1000)  # kCGScreenSaverWindowLevel
+                # Use maximum window level to float above fullscreen
+                ns_window.setLevel_(max_level)
                 ns_window.setCollectionBehavior_(
                     1 << 0   # canJoinAllSpaces
                     | 1 << 4  # stationary
@@ -100,7 +121,7 @@ class SubtitleOverlay(QWidget):
                     | 1 << 9  # fullScreenAuxiliary
                 )
                 ns_window.setCanHide_(False)
-            print("[UI] Click-through enabled (macOS)")
+            print(f"[UI] Click-through enabled (macOS, level={max_level})")
         except Exception as e:
             print(f"[UI] macOS click-through failed: {e}")
 
@@ -132,15 +153,40 @@ class SubtitleOverlay(QWidget):
 
     @pyqtSlot(str)
     def _update_text(self, text: str):
+        """Classic mode: replace all text at once."""
         self.fade_anim.stop()
         self.setWindowOpacity(1.0)
         self.label.setText(text)
         self.hide_timer.start(self.config.display_duration_ms)
 
+    @pyqtSlot(dict)
+    def _update_word(self, message: dict):
+        """Streaming mode: add words progressively."""
+        msg_type = message.get("type")
+
+        if msg_type == "segment_start":
+            # Clear previous text
+            self.current_text = []
+            self.label.setText("")
+        elif msg_type == "word":
+            # Add new word
+            self.current_text.append(message["text"])
+            full_text = " ".join(self.current_text)
+            self.label.setText(full_text)
+
+        # Reset fade timer and opacity
+        self.fade_anim.stop()
+        self.setWindowOpacity(1.0)
+        self.hide_timer.start(self.config.display_duration_ms)
+
     def _poll_queue(self):
         try:
-            text = self.display_queue.get_nowait()
-            self.new_text_signal.emit(text)
+            item = self.display_queue.get_nowait()
+            # Check if streaming message (dict) or classic (str)
+            if isinstance(item, dict):
+                self.new_word_signal.emit(item)
+            else:
+                self.new_text_signal.emit(item)
         except Empty:
             pass
 

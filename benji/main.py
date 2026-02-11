@@ -3,12 +3,14 @@ import threading
 from queue import Queue
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QShortcut, QKeySequence
 
 from benji.config import AudioConfig, VADConfig, STTConfig, UIConfig
 from benji.audio.capture import AudioCapture
 from benji.audio.vad import VADProcessor
 from benji.stt.transcriber import Transcriber
 from benji.ui.overlay import SubtitleOverlay
+from benji.ui.history_window import HistoryWindow
 
 
 def main():
@@ -41,6 +43,16 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Benji")
     overlay = SubtitleOverlay(display_queue, ui_config)
+
+    # History window (initially hidden)
+    history_window = HistoryWindow()
+    history_window.hide()
+
+    # Global shortcut to show history: Cmd+Shift+H (macOS) or Ctrl+Shift+H (others)
+    history_shortcut = QShortcut(QKeySequence("Ctrl+Shift+H"), overlay)
+    history_shortcut.activated.connect(lambda: history_window.show() if history_window.isHidden() else history_window.hide())
+
+    print("[Benji] Press Ctrl+Shift+H to view history")
 
     exit_code = app.exec()
 
