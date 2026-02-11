@@ -17,6 +17,7 @@ class SubtitleOverlay(QWidget):
         self.display_queue = display_queue
         self.config = config or UIConfig()
         self.current_text = []  # For streaming mode
+        self._shutting_down = False  # Flag to prevent operations during shutdown
 
         # Window flags (cross-platform)
         self.setWindowFlags(
@@ -72,6 +73,11 @@ class SubtitleOverlay(QWidget):
 
         self.show()
         self._make_click_through()
+
+    def closeEvent(self, event):
+        """Handle window close event - cleanup before Qt destroys objects."""
+        self.cleanup()
+        event.accept()
 
     def _position_window(self):
         screen = QApplication.primaryScreen()
@@ -154,44 +160,84 @@ class SubtitleOverlay(QWidget):
     @pyqtSlot(str)
     def _update_text(self, text: str):
         """Classic mode: replace all text at once."""
-        self.fade_anim.stop()
-        self.setWindowOpacity(1.0)
-        self.label.setText(text)
-        self.hide_timer.start(self.config.display_duration_ms)
+        if self._shutting_down:
+            return
+        try:
+            self.fade_anim.stop()
+            self.setWindowOpacity(1.0)
+            self.label.setText(text)
+            self.hide_timer.start(self.config.display_duration_ms)
+        except Exception as e:
+            if not self._shutting_down:
+                print(f"[UI] Error in _update_text: {e}")
 
     @pyqtSlot(dict)
     def _update_word(self, message: dict):
         """Streaming mode: add words progressively."""
-        msg_type = message.get("type")
+        if self._shutting_down:
+            return
+        try:
+            msg_type = message.get("type")
 
-        if msg_type == "segment_start":
-            # Clear previous text
-            self.current_text = []
-            self.label.setText("")
-        elif msg_type == "word":
-            # Add new word
-            self.current_text.append(message["text"])
-            full_text = " ".join(self.current_text)
-            self.label.setText(full_text)
+            if msg_type == "segment_start":
+                # Clear previous text
+                self.current_text = []
+                self.label.setText("")
+            elif msg_type == "word":
+                # Add new word
+                self.current_text.append(message["text"])
+                full_text = " ".join(self.current_text)
+                self.label.setText(full_text)
 
-        # Reset fade timer and opacity
-        self.fade_anim.stop()
-        self.setWindowOpacity(1.0)
-        self.hide_timer.start(self.config.display_duration_ms)
+            # Reset fade timer and opacity
+            self.fade_anim.stop()
+            self.setWindowOpacity(1.0)
+            self.hide_timer.start(self.config.display_duration_ms)
+        except Exception as e:
+            if not self._shutting_down:
+                print(f"[UI] Error in _update_word: {e}")
 
     def _poll_queue(self):
+        if self._shutting_down:
+            return
         try:
             item = self.display_queue.get_nowait()
+            # Ignore None (shutdown signal from threads)
+            if item is None:
+                return
             # Check if streaming message (dict) or classic (str)
             if isinstance(item, dict):
                 self.new_word_signal.emit(item)
-            else:
+            elif isinstance(item, str):
                 self.new_text_signal.emit(item)
         except Empty:
             pass
+        except Exception as e:
+            # Prevent crashes from exceptions in Qt callbacks
+            if not self._shutting_down:
+                print(f"[UI] Error in poll_queue: {e}")
 
     def _start_fade(self):
-        self.fade_anim.setDuration(self.config.fade_duration_ms)
-        self.fade_anim.setStartValue(1.0)
-        self.fade_anim.setEndValue(0.0)
-        self.fade_anim.start()
+        if self._shutting_down:
+            return
+        try:
+            self.fade_anim.setDuration(self.config.fade_duration_ms)
+            self.fade_anim.setStartValue(1.0)
+            self.fade_anim.setEndValue(0.0)
+            self.fade_anim.start()
+        except Exception as e:
+            if not self._shutting_down:
+                print(f"[UI] Error in _start_fade: {e}")
+
+    def cleanup(self):
+        """Stop all timers and animations before shutdown."""
+        self._shutting_down = True
+        self.poll_timer.stop()
+        self.hide_timer.stop()
+        self.fade_anim.stop()
+        # Disconnect signals to prevent any pending emissions
+        try:
+            self.new_text_signal.disconnect()
+            self.new_word_signal.disconnect()
+        except:
+            pass

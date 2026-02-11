@@ -1,9 +1,11 @@
 import sys
+import signal
 import threading
 from queue import Queue
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtCore import QTimer
 
 from benji.config import AudioConfig, VADConfig, STTConfig, UIConfig
 from benji.audio.capture import AudioCapture
@@ -42,6 +44,22 @@ def main():
     # UI on main thread
     app = QApplication(sys.argv)
     app.setApplicationName("Benji")
+
+    # Install exception hooks to prevent crashes from Qt callbacks
+    def qt_exception_hook(exc_type, exc_value, exc_traceback):
+        """Catch exceptions in Qt callbacks to prevent abort()."""
+        if not issubclass(exc_type, KeyboardInterrupt):
+            print(f"[Error] Uncaught exception: {exc_type.__name__}: {exc_value}")
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+    def unraisable_hook(unraisable):
+        """Catch unraisable exceptions (like in Qt callbacks)."""
+        print(f"[Error] Unraisable exception: {unraisable.exc_type.__name__}: {unraisable.exc_value}")
+        print(f"       in object: {unraisable.object}")
+
+    sys.excepthook = qt_exception_hook
+    sys.unraisablehook = unraisable_hook
+
     overlay = SubtitleOverlay(display_queue, ui_config)
 
     # History window (initially hidden)
@@ -51,6 +69,19 @@ def main():
     # Global shortcut to show history: Cmd+Shift+H (macOS) or Ctrl+Shift+H (others)
     history_shortcut = QShortcut(QKeySequence("Ctrl+Shift+H"), overlay)
     history_shortcut.activated.connect(lambda: history_window.show() if history_window.isHidden() else history_window.hide())
+
+    # Clean shutdown: stop timers immediately when quit is requested
+    app.aboutToQuit.connect(lambda: overlay.cleanup() if not overlay._shutting_down else None)
+
+    # Handle system signals (Ctrl+C, termination)
+    def signal_handler(sig, frame):
+        """Handle system signals for clean shutdown."""
+        print("\n[Benji] Interrupt received, shutting down...")
+        overlay.cleanup()
+        QTimer.singleShot(0, app.quit)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     print("[Benji] Press Ctrl+Shift+H to view history")
 
