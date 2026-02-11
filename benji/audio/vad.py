@@ -1,8 +1,59 @@
-import torch
+import os
+
 import numpy as np
+import onnxruntime as ort
 from queue import Queue, Full
 
 from benji.config import AudioConfig, VADConfig
+
+SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+
+
+class SileroVADOnnx:
+    """Silero VAD using ONNX runtime (no PyTorch dependency)."""
+
+    def __init__(self, model_path: str):
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        self.session = ort.InferenceSession(model_path, sess_options=opts)
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros(64, dtype=np.float32)  # 64 samples context for 16kHz
+        self._sr = np.array(16000, dtype=np.int64)
+
+    def reset_state(self):
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros(64, dtype=np.float32)
+
+    def __call__(self, audio_chunk: np.ndarray) -> float:
+        # Prepend context to audio chunk
+        audio_with_context = np.concatenate([self._context, audio_chunk])
+        # Update context for next call
+        self._context = audio_chunk[-64:]
+        # Run inference
+        ort_inputs = {
+            "input": audio_with_context[np.newaxis, :].astype(np.float32),
+            "state": self._state,
+            "sr": self._sr,
+        }
+        out, new_state = self.session.run(None, ort_inputs)
+        self._state = new_state
+        return float(out[0][0])
+
+
+def _download_model() -> str:
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "benji")
+    os.makedirs(cache_dir, exist_ok=True)
+    model_path = os.path.join(cache_dir, "silero_vad.onnx")
+    if not os.path.exists(model_path):
+        print("[VAD] Downloading Silero VAD ONNX model...")
+        import httpx
+        with httpx.stream("GET", SILERO_ONNX_URL, follow_redirects=True) as r:
+            r.raise_for_status()
+            with open(model_path, "wb") as f:
+                for chunk in r.iter_bytes():
+                    f.write(chunk)
+    return model_path
 
 
 class VADProcessor:
@@ -19,12 +70,10 @@ class VADProcessor:
         self.config = vad_config or VADConfig()
         self.sample_rate = self.audio_config.sample_rate
 
-        # Load Silero VAD
-        self.model, _ = torch.hub.load(
-            "snakers4/silero-vad", "silero_vad", trust_repo=True
-        )
-        self.model.eval()
-        print("[VAD] Silero VAD loaded")
+        # Load Silero VAD (ONNX)
+        model_path = _download_model()
+        self.model = SileroVADOnnx(model_path)
+        print("[VAD] Silero VAD loaded (ONNX)")
 
         # State
         self.is_speaking = False
@@ -36,8 +85,7 @@ class VADProcessor:
         return len(chunk) / self.sample_rate * 1000
 
     def process_chunk(self, chunk: np.ndarray) -> None:
-        tensor = torch.from_numpy(chunk)
-        confidence = self.model(tensor, self.sample_rate).item()
+        confidence = self.model(chunk)
 
         chunk_ms = self._chunk_duration_ms(chunk)
 
@@ -84,6 +132,7 @@ class VADProcessor:
         self.silence_chunks = 0
         self.is_speaking = False
         self.pre_speech_buffer = []
+        self.model.reset_state()
 
     def run(self):
         print("[VAD] Processing started")
