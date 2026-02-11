@@ -91,13 +91,31 @@ Edit `benji/config.py` to customize:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model_size` | `small` | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| `model_size` | Auto-selected | Whisper model: `tiny`, `base`, `small`, `medium`, `large-v3`<br>Auto-selects `medium` for powerful hardware (GPU or 16GB+ RAM on macOS) |
 | `language` | `None` | Target language (`None` = auto-detect, or `"en"`, `"fr"`, etc.) |
 | `silence_duration_ms` | `600` | Silence needed before transcribing a segment |
 | `font_size` | `28` | Subtitle font size |
 | `display_duration_ms` | `5000` | How long subtitles stay visible |
 | `bottom_margin` | `80` | Distance from bottom of screen (px) |
 | `streaming_display` | `True` | Display words progressively (vs all at once) |
+
+### Model Selection Logic
+
+Benji automatically selects the best model for your hardware:
+
+| Condition | Model | Size | Quality |
+|-----------|-------|------|---------|
+| 8GB+ RAM | `small` | 500MB | Very good |
+| <8GB RAM | `base` | 150MB | Good |
+
+**All models available:**
+- `tiny` -- 75MB -- Fast but poor quality
+- `base` -- 150MB -- Decent for English, acceptable for other languages
+- `small` -- 500MB -- Very good quality, best balance of speed/quality (recommended)
+- `medium` -- 1.5GB -- Excellent quality but slower
+- `large-v3` -- 3GB -- Best quality, but very slow on CPU
+
+You can override the auto-selection by setting `model_size` explicitly in `config.py`.
 
 ## How it works
 

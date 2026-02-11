@@ -53,9 +53,19 @@ class Transcriber:
             self.compute_type = self.config.compute_type
 
     def load_model(self):
+        # Check if model is already cached
+        from faster_whisper.utils import download_model
+        try:
+            model_path = download_model(self.config.model_size, local_files_only=True)
+        except Exception:
+            model_path = None
+            print(f"[STT] Model '{self.config.model_size}' not found locally. Downloading (this may take several minutes)...")
+            self.display_queue.put({"type": "segment_start"})
+            self.display_queue.put({"type": "word", "text": f"Downloading model '{self.config.model_size}'..."})
+
         print(f"[STT] Loading Whisper model '{self.config.model_size}' on {self.device} ({self.compute_type})...")
         self.model = WhisperModel(
-            self.config.model_size,
+            model_path or self.config.model_size,
             device=self.device,
             compute_type=self.compute_type,
             cpu_threads=self.config.cpu_threads if self.device == "cpu" else None,

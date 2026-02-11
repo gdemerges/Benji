@@ -1,4 +1,5 @@
 import platform
+import psutil
 from dataclasses import dataclass, field
 
 IS_MACOS = platform.system() == "Darwin"
@@ -7,6 +8,31 @@ IS_WINDOWS = platform.system() == "Windows"
 
 def _default_font() -> str:
     return ".AppleSystemUIFont" if IS_MACOS else "Segoe UI"
+
+
+def _default_model_size() -> str:
+    """Auto-select model size based on available hardware."""
+    # Check for GPU
+    has_gpu = False
+    try:
+        import torch
+        has_gpu = torch.cuda.is_available()
+    except ImportError:
+        pass
+
+    # Check RAM
+    ram_gb = psutil.virtual_memory().total / (1024**3)
+
+    # Decision tree - favor small for good balance of speed/quality
+    if has_gpu:
+        # With GPU, small is very fast
+        return "small"
+    else:
+        # CPU-only: depends on RAM
+        if ram_gb >= 8:
+            return "small"
+        else:
+            return "base"  # Limited hardware
 
 
 @dataclass
@@ -28,7 +54,7 @@ class VADConfig:
 
 @dataclass
 class STTConfig:
-    model_size: str = "small"
+    model_size: str = field(default_factory=_default_model_size)
     language: str | None = None  # None = auto-detect language
     beam_size: int = 3
     cpu_threads: int = 4
