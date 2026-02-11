@@ -1,4 +1,12 @@
-from dataclasses import dataclass
+import platform
+from dataclasses import dataclass, field
+
+IS_MACOS = platform.system() == "Darwin"
+IS_WINDOWS = platform.system() == "Windows"
+
+
+def _default_font() -> str:
+    return ".AppleSystemUIFont" if IS_MACOS else "Segoe UI"
 
 
 @dataclass
@@ -29,7 +37,7 @@ class STTConfig:
 
 @dataclass
 class UIConfig:
-    font_family: str = ".AppleSystemUIFont"
+    font_family: str = field(default_factory=_default_font)
     font_size: int = 28
     bg_opacity: int = 160
     display_duration_ms: int = 5000

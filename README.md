@@ -2,7 +2,7 @@
 
 Real-time speech-to-text subtitles that overlay on top of your screen. Powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper) running locally on your machine.
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey) ![License](https://img.shields.io/badge/License-MIT-green)
+![Python](https://img.shields.io/badge/Python-3.11+-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## Features
 
@@ -23,35 +23,52 @@ Microphone → AudioCapture → VAD (Silero) → Transcriber (Whisper) → Overl
 ## Requirements
 
 - Python 3.11+
-- macOS (Windows support planned)
-- [PortAudio](https://www.portaudio.com/) (`brew install portaudio`)
+- macOS or Windows 10/11
 
 ## Installation
 
+### macOS
+
 ```bash
-# Clone the repository
 git clone https://github.com/YOUR_USERNAME/benji.git
 cd benji
 
-# Install system dependency
 brew install portaudio
 
-# Create virtual environment and install dependencies
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Windows
+
+```powershell
+git clone https://github.com/YOUR_USERNAME/benji.git
+cd benji
+
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+> **Note**: On Windows, PortAudio is bundled with the `sounddevice` package -- no extra install needed.
 
 The Whisper model (~500MB for `small`) and Silero VAD (~2MB) are downloaded automatically on first run.
 
 ## Usage
 
 ```bash
+# macOS
 source .venv/bin/activate
+python run.py
+
+# Windows
+.venv\Scripts\activate
 python run.py
 ```
 
 macOS will prompt for microphone access on first launch -- allow it.
+On Windows, ensure your microphone is enabled in Settings > Privacy > Microphone.
 
 Subtitles appear at the bottom center of the screen with a semi-transparent background. They fade out after 5 seconds of silence.
 

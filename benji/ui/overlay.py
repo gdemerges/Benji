@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont
 
-from benji.config import UIConfig
+from benji.config import UIConfig, IS_MACOS, IS_WINDOWS
 
 
 class SubtitleOverlay(QWidget):
@@ -16,14 +16,15 @@ class SubtitleOverlay(QWidget):
         self.display_queue = display_queue
         self.config = config or UIConfig()
 
-        # Window flags
+        # Window flags (cross-platform)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+        if IS_MACOS:
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
         # Label
         self.label = QLabel("")
@@ -73,33 +74,61 @@ class SubtitleOverlay(QWidget):
         screen = QApplication.primaryScreen()
         if not screen:
             return
-        geom = screen.geometry()
+        geom = screen.availableGeometry()
         width = int(geom.width() * self.config.window_width_ratio)
         height = 120
-        x = (geom.width() - width) // 2
-        y = geom.height() - height - self.config.bottom_margin
+        x = geom.x() + (geom.width() - width) // 2
+        y = geom.y() + geom.height() - height - self.config.bottom_margin
         self.setGeometry(x, y, width, height)
 
     def _make_click_through(self):
-        if platform.system() != "Darwin":
-            return
+        if IS_MACOS:
+            self._click_through_macos()
+        elif IS_WINDOWS:
+            self._click_through_windows()
+
+    def _click_through_macos(self):
         try:
             from AppKit import NSApp
             for ns_window in NSApp.windows():
                 ns_window.setIgnoresMouseEvents_(True)
-                # kCGScreenSaverWindowLevel (1000) floats above fullscreen apps
-                ns_window.setLevel_(1000)
+                ns_window.setLevel_(1000)  # kCGScreenSaverWindowLevel
                 ns_window.setCollectionBehavior_(
                     1 << 0   # canJoinAllSpaces
                     | 1 << 4  # stationary
                     | 1 << 7  # canJoinAllApplications
                     | 1 << 9  # fullScreenAuxiliary
                 )
-                # Ensure the window is not hidden by Expose/Mission Control
                 ns_window.setCanHide_(False)
-            print("[UI] Click-through + fullscreen overlay enabled")
+            print("[UI] Click-through enabled (macOS)")
         except Exception as e:
-            print(f"[UI] Click-through setup failed: {e}")
+            print(f"[UI] macOS click-through failed: {e}")
+
+    def _click_through_windows(self):
+        try:
+            import win32gui
+            import win32con
+            hwnd = int(self.winId())
+            # Add layered + transparent + tool window extended styles
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            ex_style |= (
+                win32con.WS_EX_LAYERED
+                | win32con.WS_EX_TRANSPARENT
+                | win32con.WS_EX_TOOLWINDOW
+                | win32con.WS_EX_TOPMOST
+                | win32con.WS_EX_NOACTIVATE
+            )
+            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
+            # Force topmost position
+            win32gui.SetWindowPos(
+                hwnd,
+                win32con.HWND_TOPMOST,
+                0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+            )
+            print("[UI] Click-through enabled (Windows)")
+        except Exception as e:
+            print(f"[UI] Windows click-through failed: {e}")
 
     @pyqtSlot(str)
     def _update_text(self, text: str):
