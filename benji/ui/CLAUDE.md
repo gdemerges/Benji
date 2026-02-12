@@ -13,4 +13,10 @@
 | #418 | " | 🔴 | Added defensive shutdown guards to _update_text method in SubtitleOverlay | ~383 |
 | #416 | " | 🔴 | Added shutdown guards and exception handling to queue polling | ~293 |
 | #411 | 9:39 PM | 🔵 | Benji subtitle overlay UI implementation with cross-platform click-through support | ~518 |
+
+### Feb 12, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #439 | 7:25 AM | ✅ | Optimized UI polling rate from 20 FPS to 60 FPS | ~261 |
 </claude-mem-context>

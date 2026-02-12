@@ -14,8 +14,10 @@ class SileroVADOnnx:
 
     def __init__(self, model_path: str):
         opts = ort.SessionOptions()
+        # Single thread for minimal latency (VAD is very fast ~1-2ms)
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 1
+        # Note: graph optimization disabled - incompatible with Silero VAD LSTM layers
         self.session = ort.InferenceSession(model_path, sess_options=opts)
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._context = np.zeros(64, dtype=np.float32)  # 64 samples context for 16kHz

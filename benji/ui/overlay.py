@@ -57,10 +57,10 @@ class SubtitleOverlay(QWidget):
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
         self.fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
 
-        # Poll display queue
+        # Poll display queue at 60 FPS for smooth updates
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self._poll_queue)
-        self.poll_timer.start(50)
+        self.poll_timer.start(16)  # Optimized: ~60 FPS (16ms) vs 20 FPS (50ms)
 
         # Auto-hide timer
         self.hide_timer = QTimer()

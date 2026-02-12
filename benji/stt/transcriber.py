@@ -1,5 +1,4 @@
 import platform
-import time
 
 import numpy as np
 from faster_whisper import WhisperModel
@@ -100,17 +99,9 @@ class Transcriber:
         # Signal start of new segment
         self.display_queue.put({"type": "segment_start"})
 
-        # Send words progressively with timing
-        prev_end = 0
-        for i, word in enumerate(all_words):
-            # Calculate delay based on word timing
-            if i > 0:
-                delay = word.start - prev_end
-                if delay > 0:
-                    time.sleep(min(delay, 0.5))  # Cap delay at 500ms
-
+        # Send words progressively - instant display for maximum fluidity
+        for word in all_words:
             self.display_queue.put({"type": "word", "text": word.word.strip()})
-            prev_end = word.end
 
         # Save full text to history
         full_text_str = " ".join(full_text)

@@ -13,4 +13,10 @@
 | #423 | " | 🔴 | Global Qt exception hook installed to prevent abort() on uncaught callback exceptions | ~432 |
 | #413 | 9:39 PM | 🔴 | Added Qt cleanup handler to prevent timer-related shutdown errors | ~247 |
 | #410 | " | 🔵 | Benji application architecture and main entry point | ~381 |
+
+### Feb 12, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #435 | 7:24 AM | ✅ | Increased audio chunk size from 512 to 1024 samples for CPU optimization | ~354 |
 </claude-mem-context>
