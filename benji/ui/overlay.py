@@ -144,35 +144,32 @@ class SubtitleOverlay(QWidget):
 
     def _click_through_macos(self):
         try:
+            from AppKit import NSApp
             import ctypes
             import ctypes.util
-            from AppKit import NSApp
 
-            # Load CoreGraphics
+            # Get CGShieldingWindowLevel (highest reliable level)
             cg_path = ctypes.util.find_library("CoreGraphics")
-            if not cg_path:
-                print("[UI] CoreGraphics not found")
-                return
             cg = ctypes.CDLL(cg_path)
-
-            # CGWindowLevel constants
-            kCGMaximumWindowLevelKey = ctypes.c_int(13)
-            CGShieldingWindowLevel = cg.CGShieldingWindowLevel
-            CGShieldingWindowLevel.restype = ctypes.c_int32
-
-            max_level = CGShieldingWindowLevel()
+            cg.CGShieldingWindowLevel.restype = ctypes.c_int32
+            max_level = cg.CGShieldingWindowLevel()
 
             for ns_window in NSApp.windows():
                 ns_window.setIgnoresMouseEvents_(True)
-                # Use maximum window level to float above fullscreen
                 ns_window.setLevel_(max_level)
+
+                # Critical: CanJoinAllApplications (1<<11) is required
+                # for visibility across fullscreen Spaces
                 ns_window.setCollectionBehavior_(
-                    1 << 0   # canJoinAllSpaces
-                    | 1 << 4  # stationary
-                    | 1 << 7  # canJoinAllApplications
-                    | 1 << 9  # fullScreenAuxiliary
+                    1 << 0   # CanJoinAllSpaces
+                    | 1 << 4  # Stationary
+                    | 1 << 6  # IgnoresCycle
+                    | 1 << 7  # FullScreenAuxiliary
+                    | 1 << 11 # CanJoinAllApplications
                 )
                 ns_window.setCanHide_(False)
+                ns_window.setHidesOnDeactivate_(False)
+                ns_window.setOpaque_(False)
             print(f"[UI] Click-through enabled (macOS, level={max_level})")
         except Exception as e:
             print(f"[UI] macOS click-through failed: {e}")
