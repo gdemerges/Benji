@@ -6,6 +6,7 @@ from queue import Queue
 
 from benji.config import STTConfig
 from benji.history import TranscriptionHistory
+from benji.stt.postprocessing import postprocess_text
 
 
 def _detect_device():
@@ -43,13 +44,16 @@ class Transcriber:
         self.transcribe_queue = transcribe_queue
         self.display_queue = display_queue
         self.config = config or STTConfig()
-        self.model = None
         self.history = TranscriptionHistory()
 
         # Auto-detect device if not specified
         self.device, self.compute_type = _detect_device()
         if self.config.compute_type != "auto":
             self.compute_type = self.config.compute_type
+
+        # Pre-load model immediately to avoid delay on first transcription
+        self.model = None
+        self.load_model()
 
     def load_model(self):
         # Check if model is already cached
@@ -72,7 +76,10 @@ class Transcriber:
         print(f"[STT] Model loaded")
 
     def transcribe_segment_streaming(self, audio: np.ndarray):
-        """Transcribe and send words progressively to display queue."""
+        """Transcribe and send words progressively to display queue (real-time preview)."""
+        # Signal start of new segment
+        self.display_queue.put({"type": "segment_start"})
+
         segments, info = self.model.transcribe(
             audio,
             language=self.config.language,
@@ -84,29 +91,23 @@ class Transcriber:
             log_prob_threshold=-1.0,
         )
 
-        # Collect all words with timestamps
-        all_words = []
+        # Stream words in real-time as they're transcribed
         full_text = []
         for segment in segments:
             if hasattr(segment, 'words') and segment.words:
                 for word in segment.words:
-                    all_words.append(word)
-                    full_text.append(word.word.strip())
+                    word_text = word.word.strip()
+                    full_text.append(word_text)
+                    # Send word immediately for real-time preview
+                    self.display_queue.put({"type": "word", "text": word_text})
 
-        if not all_words:
-            return
-
-        # Signal start of new segment
-        self.display_queue.put({"type": "segment_start"})
-
-        # Send words progressively - instant display for maximum fluidity
-        for word in all_words:
-            self.display_queue.put({"type": "word", "text": word.word.strip()})
-
-        # Save full text to history
-        full_text_str = " ".join(full_text)
-        print(f"[STT] \"{full_text_str}\"")
-        self.history.add(full_text_str)
+        # Save full text to history with post-processing
+        if full_text:
+            full_text_str = " ".join(full_text)
+            # Apply post-processing for better punctuation/capitalization
+            processed_text = postprocess_text(full_text_str, language=self.config.language)
+            print(f"[STT] \"{processed_text}\"")
+            self.history.add(processed_text)
 
     def transcribe_segment_classic(self, audio: np.ndarray) -> str:
         """Classic mode: transcribe and send complete text at once."""
@@ -129,7 +130,6 @@ class Transcriber:
             self.display_queue.put(full_text)
 
     def run(self):
-        self.load_model()
         print("[STT] Transcription started (streaming mode)")
         while True:
             audio = self.transcribe_queue.get()

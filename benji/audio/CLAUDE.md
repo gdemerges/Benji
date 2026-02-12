@@ -7,6 +7,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #450 | 7:33 AM | 🟣 | Added VAD status notifications to display queue for real-time speech detection feedback | ~371 |
+| #449 | " | 🟣 | Added display_queue parameter to VADProcessor for direct UI feedback | ~369 |
 | #442 | 7:25 AM | ✅ | Enabled full ONNX graph optimization for Silero VAD model | ~315 |
 | #433 | 7:22 AM | 🔵 | AudioCapture implementation for real-time microphone input | ~298 |
 </claude-mem-context>

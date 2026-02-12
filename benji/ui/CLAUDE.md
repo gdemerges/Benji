@@ -18,5 +18,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #456 | 7:34 AM | 🟣 | Added VAD status visual indicator to subtitle overlay | ~333 |
+| #455 | " | 🟣 | Added visual VAD status indicator to subtitle overlay | ~360 |
 | #439 | 7:25 AM | ✅ | Optimized UI polling rate from 20 FPS to 60 FPS | ~261 |
 </claude-mem-context>

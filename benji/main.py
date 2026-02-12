@@ -29,7 +29,7 @@ def main():
 
     # Components
     capture = AudioCapture(audio_queue, audio_config)
-    vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config)
+    vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue)
     transcriber = Transcriber(transcribe_queue, display_queue, stt_config)
 
     # Worker threads

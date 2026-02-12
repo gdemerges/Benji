@@ -1,16 +1,39 @@
 import platform
 from queue import Queue, Empty
 
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPainter, QColor
 
 from benji.config import UIConfig, IS_MACOS, IS_WINDOWS
+
+
+class VADIndicator(QWidget):
+    """Visual indicator for VAD status (speaking/silent)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_speaking = False
+        self.setFixedSize(12, 12)
+
+    def set_speaking(self, speaking: bool):
+        self.is_speaking = speaking
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw circle
+        color = QColor(0, 255, 0, 200) if self.is_speaking else QColor(128, 128, 128, 100)
+        painter.setBrush(color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(0, 0, 12, 12)
 
 
 class SubtitleOverlay(QWidget):
     new_text_signal = pyqtSignal(str)
     new_word_signal = pyqtSignal(dict)
+    vad_status_signal = pyqtSignal(bool)
 
     def __init__(self, display_queue: Queue, config: UIConfig = None):
         super().__init__()
@@ -29,6 +52,9 @@ class SubtitleOverlay(QWidget):
         if IS_MACOS:
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
+        # VAD indicator
+        self.vad_indicator = VADIndicator()
+
         # Label
         self.label = QLabel("")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -45,10 +71,18 @@ class SubtitleOverlay(QWidget):
             }}
         """)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.label)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
+        # Layout with VAD indicator
+        indicator_layout = QHBoxLayout()
+        indicator_layout.addStretch()
+        indicator_layout.addWidget(self.vad_indicator)
+        indicator_layout.setContentsMargins(8, 8, 8, 0)
+
+        main_layout = QVBoxLayout()
+        main_layout.addLayout(indicator_layout)
+        main_layout.addWidget(self.label)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)
+        self.setLayout(main_layout)
 
         # Position
         self._position_window()
@@ -70,9 +104,21 @@ class SubtitleOverlay(QWidget):
         # Signal connections
         self.new_text_signal.connect(self._update_text)
         self.new_word_signal.connect(self._update_word)
+        self.vad_status_signal.connect(self._update_vad_status)
 
         self.show()
         self._make_click_through()
+
+    @pyqtSlot(bool)
+    def _update_vad_status(self, speaking: bool):
+        """Update VAD indicator."""
+        if self._shutting_down:
+            return
+        try:
+            self.vad_indicator.set_speaking(speaking)
+        except Exception as e:
+            if not self._shutting_down:
+                print(f"[UI] Error in _update_vad_status: {e}")
 
     def closeEvent(self, event):
         """Handle window close event - cleanup before Qt destroys objects."""
@@ -205,9 +251,14 @@ class SubtitleOverlay(QWidget):
             # Ignore None (shutdown signal from threads)
             if item is None:
                 return
-            # Check if streaming message (dict) or classic (str)
+            # Check message type
             if isinstance(item, dict):
-                self.new_word_signal.emit(item)
+                msg_type = item.get("type")
+                if msg_type == "vad_status":
+                    self.vad_status_signal.emit(item["speaking"])
+                else:
+                    # Streaming word message
+                    self.new_word_signal.emit(item)
             elif isinstance(item, str):
                 self.new_text_signal.emit(item)
         except Empty:

@@ -65,9 +65,11 @@ class VADProcessor:
         transcribe_queue: Queue,
         audio_config: AudioConfig = None,
         vad_config: VADConfig = None,
+        display_queue: Queue = None,
     ):
         self.audio_queue = audio_queue
         self.transcribe_queue = transcribe_queue
+        self.display_queue = display_queue
         self.audio_config = audio_config or AudioConfig()
         self.config = vad_config or VADConfig()
         self.sample_rate = self.audio_config.sample_rate
@@ -96,6 +98,9 @@ class VADProcessor:
                 self.is_speaking = True
                 self.speech_buffer = list(self.pre_speech_buffer)
                 print("[VAD] Speech started")
+                # Send VAD status to display
+                if self.display_queue:
+                    self.display_queue.put({"type": "vad_status", "speaking": True})
             self.speech_buffer.append(chunk)
             self.silence_chunks = 0
         else:
@@ -135,6 +140,10 @@ class VADProcessor:
         self.is_speaking = False
         self.pre_speech_buffer = []
         self.model.reset_state()
+
+        # Send VAD status to display
+        if self.display_queue:
+            self.display_queue.put({"type": "vad_status", "speaking": False})
 
     def run(self):
         print("[VAD] Processing started")
