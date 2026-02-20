@@ -57,6 +57,7 @@ class SubtitleOverlay(QWidget):
 
         # Label
         self.label = QLabel("")
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setWordWrap(True)
         self.label.setFont(
