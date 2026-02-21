@@ -46,7 +46,7 @@ class AudioConfig:
 @dataclass
 class VADConfig:
     speech_threshold: float = 0.5
-    silence_duration_ms: int = 400  # Optimized: -200ms latency for faster response
+    silence_duration_ms: int = 300  # Optimized: -300ms latency for faster response
     min_speech_duration_ms: int = 250
     max_speech_duration_s: float = 15.0
     pre_speech_pad_ms: int = 300

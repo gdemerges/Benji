@@ -245,24 +245,23 @@ class SubtitleOverlay(QWidget):
         if self._shutting_down:
             return
         try:
-            item = self.display_queue.get_nowait()
-            # Ignore None (shutdown signal from threads)
-            if item is None:
-                return
-            # Check message type
-            if isinstance(item, dict):
-                msg_type = item.get("type")
-                if msg_type == "vad_status":
-                    self.vad_status_signal.emit(item["speaking"])
-                else:
-                    # Streaming word message
-                    self.new_word_signal.emit(item)
-            elif isinstance(item, str):
-                self.new_text_signal.emit(item)
-        except Empty:
-            pass
+            # Drain all available items in one tick to avoid artificial per-word delay
+            while True:
+                try:
+                    item = self.display_queue.get_nowait()
+                except Empty:
+                    break
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    msg_type = item.get("type")
+                    if msg_type == "vad_status":
+                        self.vad_status_signal.emit(item["speaking"])
+                    else:
+                        self.new_word_signal.emit(item)
+                elif isinstance(item, str):
+                    self.new_text_signal.emit(item)
         except Exception as e:
-            # Prevent crashes from exceptions in Qt callbacks
             if not self._shutting_down:
                 print(f"[UI] Error in poll_queue: {e}")
 
