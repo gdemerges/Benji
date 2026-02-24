@@ -84,10 +84,12 @@ class Transcriber:
             audio,
             language=self.config.language,
             beam_size=self.config.beam_size,
-            vad_filter=False,
+            vad_filter=True,  # Enable built-in VAD filter for cleaner input
+            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
             word_timestamps=True,  # Enable word-level timestamps
             condition_on_previous_text=True,
-            no_speech_threshold=0.6,
+            initial_prompt="Bonjour, ceci est du français.",
+            no_speech_threshold=0.5,
             log_prob_threshold=-1.0,
         )
 
@@ -115,10 +117,12 @@ class Transcriber:
             audio,
             language=self.config.language,
             beam_size=self.config.beam_size,
-            vad_filter=False,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
             word_timestamps=False,
             condition_on_previous_text=True,
-            no_speech_threshold=0.6,
+            initial_prompt="Bonjour, ceci est du français.",
+            no_speech_threshold=0.5,
             log_prob_threshold=-1.0,
         )
         text_parts = [seg.text for seg in segments]

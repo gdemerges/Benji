@@ -28,6 +28,13 @@ def postprocess_text(text: str, language: str = None) -> str:
     # Fix spacing around punctuation
     text = re.sub(r'\s+([,.!?;:])', r'\1', text)  # Remove space before punctuation
     text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)  # Add space after punctuation
+    
+    # Fix French apostrophes (e.g., "qu ' on" -> "qu'on")
+    text = re.sub(r"([a-z])\s*'\s*([a-z])", r"\1'\2", text, flags=re.IGNORECASE)
+    
+    # Fix hyphens (e.g., "est - ce" -> "est-ce")
+    text = re.sub(r"([a-z])\s*-\s*([a-z])", r"\1-\2", text, flags=re.IGNORECASE)
+    
     text = re.sub(r'\s+', ' ', text)  # Remove multiple spaces
 
     # Capitalize first letter

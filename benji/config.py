@@ -46,17 +46,17 @@ class AudioConfig:
 @dataclass
 class VADConfig:
     speech_threshold: float = 0.5
-    silence_duration_ms: int = 300  # Optimized: -300ms latency for faster response
+    silence_duration_ms: int = 500  # More natural pause between sentences
     min_speech_duration_ms: int = 250
     max_speech_duration_s: float = 15.0
-    pre_speech_pad_ms: int = 300
+    pre_speech_pad_ms: int = 500  # Capture more context before speech starts
 
 
 @dataclass
 class STTConfig:
     model_size: str = field(default_factory=_default_model_size)
-    language: str | None = None  # None = auto-detect language
-    beam_size: int = 2  # Optimized: -30% transcription time, minimal accuracy loss
+    language: str | None = "fr"  # Force French by default
+    beam_size: int = 5  # Higher beam size for better accuracy
     cpu_threads: int = field(default_factory=lambda: max(1, __import__('os').cpu_count() // 2))  # Dynamic based on CPU
     compute_type: str = "auto"
 
