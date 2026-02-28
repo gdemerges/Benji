@@ -23,13 +23,14 @@ def _default_model_size() -> str:
     # Check RAM
     ram_gb = psutil.virtual_memory().total / (1024**3)
 
-    # Decision tree - favor small for good balance of speed/quality
+    # Decision tree - favor quality over speed
     if has_gpu:
-        # With GPU, small is very fast
-        return "small"
+        return "large-v3"  # Best quality with GPU
     else:
         # CPU-only: depends on RAM
-        if ram_gb >= 8:
+        if ram_gb >= 16:
+            return "medium"  # Good quality on high-RAM systems
+        elif ram_gb >= 8:
             return "small"
         else:
             return "base"  # Limited hardware

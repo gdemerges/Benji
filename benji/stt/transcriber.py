@@ -87,10 +87,12 @@ class Transcriber:
             vad_filter=True,  # Enable built-in VAD filter for cleaner input
             vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
             word_timestamps=True,  # Enable word-level timestamps
-            condition_on_previous_text=True,
-            initial_prompt="Bonjour, ceci est du français.",
-            no_speech_threshold=0.5,
+            condition_on_previous_text=False,  # Avoid hallucination loops in streaming mode
+            initial_prompt="Transcription en français. Discours naturel avec ponctuation correcte.",
+            no_speech_threshold=0.6,
             log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            temperature=[0.0, 0.2, 0.4],  # Fallback temperatures for ambiguous audio
         )
 
         # Stream words in real-time as they're transcribed
@@ -120,10 +122,12 @@ class Transcriber:
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
             word_timestamps=False,
-            condition_on_previous_text=True,
-            initial_prompt="Bonjour, ceci est du français.",
-            no_speech_threshold=0.5,
+            condition_on_previous_text=False,
+            initial_prompt="Transcription en français. Discours naturel avec ponctuation correcte.",
+            no_speech_threshold=0.6,
             log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            temperature=[0.0, 0.2, 0.4],
         )
         text_parts = [seg.text for seg in segments]
         full_text = " ".join(text_parts).strip()
