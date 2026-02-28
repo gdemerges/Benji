@@ -224,9 +224,8 @@ class SubtitleOverlay(QWidget):
             msg_type = message.get("type")
 
             if msg_type == "segment_start":
-                # Clear previous text
+                # Reset internal buffer but keep label visible until first word arrives
                 self.current_text = []
-                self.label.setText("")
             elif msg_type == "word":
                 # Add new word
                 self.current_text.append(message["text"])

@@ -85,7 +85,7 @@ class Transcriber:
             language=self.config.language,
             beam_size=self.config.beam_size,
             vad_filter=True,  # Enable built-in VAD filter for cleaner input
-            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+            vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
             word_timestamps=True,  # Enable word-level timestamps
             condition_on_previous_text=False,  # Avoid hallucination loops in streaming mode
             initial_prompt="Transcription en français. Discours naturel avec ponctuation correcte.",
@@ -120,7 +120,7 @@ class Transcriber:
             language=self.config.language,
             beam_size=self.config.beam_size,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+            vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
             word_timestamps=False,
             condition_on_previous_text=False,
             initial_prompt="Transcription en français. Discours naturel avec ponctuation correcte.",

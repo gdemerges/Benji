@@ -47,10 +47,10 @@ class AudioConfig:
 @dataclass
 class VADConfig:
     speech_threshold: float = 0.5
-    silence_duration_ms: int = 500  # More natural pause between sentences
+    silence_duration_ms: int = 300  # Reduced for faster subtitle display
     min_speech_duration_ms: int = 250
-    max_speech_duration_s: float = 15.0
-    pre_speech_pad_ms: int = 500  # Capture more context before speech starts
+    max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
+    pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
 
 
 @dataclass
