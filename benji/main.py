@@ -16,29 +16,6 @@ from benji.ui.overlay import SubtitleOverlay
 from benji.ui.history_window import HistoryWindow
 
 
-def _generate_session_summary(session_start: datetime) -> None:
-    """Generate and save a summary of the current session."""
-    from benji.history import TranscriptionHistory
-    from benji.llm.summarizer import summarize, save_summary
-
-    history = TranscriptionHistory()
-    entries = history.get_since(session_start)
-
-    if not entries:
-        print("[Summary] Aucune transcription dans cette session.")
-        return
-
-    print(f"[Summary] {len(entries)} phrase(s) transcrite(s) dans cette session.")
-    summary = summarize(entries)
-
-    if summary:
-        path = save_summary(summary)
-        print(f"\n{'='*60}")
-        print(summary)
-        print(f"{'='*60}")
-        print(f"[Summary] Résumé sauvegardé : {path}")
-
-
 def main():
     session_start = datetime.now()
 
@@ -89,7 +66,7 @@ def main():
     overlay = SubtitleOverlay(display_queue, ui_config)
 
     # History window (initially hidden)
-    history_window = HistoryWindow()
+    history_window = HistoryWindow(session_start=session_start)
     history_window.hide()
 
     # Global shortcut to show history: Cmd+Shift+H (macOS) or Ctrl+Shift+H (others)
@@ -120,9 +97,6 @@ def main():
     transcribe_queue.put(None)
     vad_thread.join(timeout=2)
     stt_thread.join(timeout=2)
-
-    # Generate session summary
-    _generate_session_summary(session_start)
 
     sys.exit(exit_code)
 

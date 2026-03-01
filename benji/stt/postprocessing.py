@@ -60,10 +60,6 @@ def postprocess_text(text: str, language: str = None) -> str:
     # Remove trailing spaces
     text = text.strip()
 
-    # Ensure sentence ends with punctuation
-    if text and text[-1] not in '.!?':
-        text += '.'
-
     return text
 
 

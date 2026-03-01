@@ -132,10 +132,22 @@ class SubtitleOverlay(QWidget):
             return
         geom = screen.availableGeometry()
         width = int(geom.width() * self.config.window_width_ratio)
-        height = 120
         x = geom.x() + (geom.width() - width) // 2
-        y = geom.y() + geom.height() - height - self.config.bottom_margin
-        self.setGeometry(x, y, width, height)
+        self.setFixedWidth(width)
+        self.setMaximumHeight(int(geom.height() * 0.4))  # Max 40% of screen height
+        self.adjustSize()
+        y = geom.y() + geom.height() - self.height() - self.config.bottom_margin
+        self.move(x, y)
+
+    def _reposition(self):
+        """Reanchor window to bottom margin after content height changes."""
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return
+        geom = screen.availableGeometry()
+        self.adjustSize()
+        y = geom.y() + geom.height() - self.height() - self.config.bottom_margin
+        self.move(self.x(), y)
 
     def _make_click_through(self):
         if IS_MACOS:
@@ -210,6 +222,7 @@ class SubtitleOverlay(QWidget):
             self.fade_anim.stop()
             self.setWindowOpacity(1.0)
             self.label.setText(text)
+            self._reposition()
             self.hide_timer.start(self.config.display_duration_ms)
         except Exception as e:
             if not self._shutting_down:
@@ -231,6 +244,7 @@ class SubtitleOverlay(QWidget):
                 self.current_text.append(message["text"])
                 full_text = " ".join(self.current_text)
                 self.label.setText(full_text)
+                self._reposition()
 
             # Reset fade timer and opacity
             self.fade_anim.stop()
