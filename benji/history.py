@@ -45,6 +45,22 @@ class TranscriptionHistory:
                 continue
         return list(reversed(entries))  # Most recent first
 
+    def get_since(self, since: datetime) -> list[dict]:
+        """Get all transcriptions recorded since a given datetime."""
+        if not self.history_file.exists():
+            return []
+        entries = []
+        with open(self.history_file, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    ts = datetime.fromisoformat(entry["timestamp"])
+                    if ts >= since:
+                        entries.append(entry)
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    continue
+        return entries
+
     def clear(self):
         """Clear all history."""
         if self.history_file.exists():

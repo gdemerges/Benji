@@ -1,6 +1,7 @@
 import sys
 import signal
 import threading
+from datetime import datetime
 from queue import Queue
 
 from PyQt6.QtWidgets import QApplication
@@ -15,7 +16,32 @@ from benji.ui.overlay import SubtitleOverlay
 from benji.ui.history_window import HistoryWindow
 
 
+def _generate_session_summary(session_start: datetime) -> None:
+    """Generate and save a summary of the current session."""
+    from benji.history import TranscriptionHistory
+    from benji.llm.summarizer import summarize, save_summary
+
+    history = TranscriptionHistory()
+    entries = history.get_since(session_start)
+
+    if not entries:
+        print("[Summary] Aucune transcription dans cette session.")
+        return
+
+    print(f"[Summary] {len(entries)} phrase(s) transcrite(s) dans cette session.")
+    summary = summarize(entries)
+
+    if summary:
+        path = save_summary(summary)
+        print(f"\n{'='*60}")
+        print(summary)
+        print(f"{'='*60}")
+        print(f"[Summary] Résumé sauvegardé : {path}")
+
+
 def main():
+    session_start = datetime.now()
+
     # Configs
     audio_config = AudioConfig()
     vad_config = VADConfig()
@@ -94,6 +120,10 @@ def main():
     transcribe_queue.put(None)
     vad_thread.join(timeout=2)
     stt_thread.join(timeout=2)
+
+    # Generate session summary
+    _generate_session_summary(session_start)
+
     sys.exit(exit_code)
 
 
