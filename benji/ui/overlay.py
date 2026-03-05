@@ -245,11 +245,11 @@ class SubtitleOverlay(QWidget):
                 full_text = " ".join(self.current_text)
                 self.label.setText(full_text)
                 self._reposition()
-
-            # Reset fade timer and opacity
-            self.fade_anim.stop()
-            self.setWindowOpacity(1.0)
-            self.hide_timer.start(self.config.display_duration_ms)
+                # Reset fade timer only when actual words arrive, not on segment_start
+                # This lets the previous text remain visible while the model transcribes
+                self.fade_anim.stop()
+                self.setWindowOpacity(1.0)
+                self.hide_timer.start(self.config.display_duration_ms)
         except Exception as e:
             if not self._shutting_down:
                 print(f"[UI] Error in _update_word: {e}")

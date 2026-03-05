@@ -67,7 +67,7 @@ class UIConfig:
     font_family: str = field(default_factory=_default_font)
     font_size: int = 28
     bg_opacity: int = 160
-    display_duration_ms: int = 5000
+    display_duration_ms: int = 8000
     fade_duration_ms: int = 1000
     window_width_ratio: float = 0.6
     bottom_margin: int = 80
