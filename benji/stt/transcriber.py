@@ -9,6 +9,23 @@ from benji.history import TranscriptionHistory
 from benji.stt.postprocessing import postprocess_text
 
 
+# Known Whisper hallucination patterns (often the initial_prompt repeated back)
+_HALLUCINATION_PATTERNS = [
+    "transcription en français",
+    "discours naturel avec ponctuation",
+    "sous-titres réalisés par",
+    "sous-titres fait par",
+    "merci d'avoir regardé",
+    "merci de votre attention",
+]
+
+
+def _is_hallucination(text: str) -> bool:
+    """Return True if the text is a known Whisper hallucination (e.g. repeated prompt)."""
+    normalized = text.lower().strip().rstrip(".")
+    return any(pattern in normalized for pattern in _HALLUCINATION_PATTERNS)
+
+
 def _detect_device():
     """Auto-detect best available device for inference."""
     # Check for CUDA (NVIDIA GPU)
@@ -110,6 +127,9 @@ class Transcriber:
             full_text_str = " ".join(full_text)
             # Apply post-processing for better punctuation/capitalization
             processed_text = postprocess_text(full_text_str, language=self.config.language)
+            # Filter out hallucinated prompt text
+            if _is_hallucination(processed_text):
+                return
             print(f"[STT] \"{processed_text}\"")
             self.history.add(processed_text)
 
@@ -132,7 +152,7 @@ class Transcriber:
         text_parts = [seg.text for seg in segments]
         full_text = " ".join(text_parts).strip()
 
-        if full_text and not full_text.isspace():
+        if full_text and not full_text.isspace() and not _is_hallucination(full_text):
             print(f"[STT] \"{full_text}\"")
             self.history.add(full_text)
             self.display_queue.put(full_text)

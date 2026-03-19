@@ -47,8 +47,8 @@ class AudioConfig:
 @dataclass
 class VADConfig:
     speech_threshold: float = 0.5
-    silence_duration_ms: int = 300  # Reduced for faster subtitle display
-    min_speech_duration_ms: int = 250
+    silence_duration_ms: int = 600  # Wait longer before cutting, reduces fragmentation
+    min_speech_duration_ms: int = 700  # Skip very short segments that Whisper can't transcribe reliably
     max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
     pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
 
