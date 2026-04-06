@@ -1,3 +1,4 @@
+import os
 import platform
 import psutil
 from dataclasses import dataclass, field
@@ -58,7 +59,7 @@ class STTConfig:
     model_size: str = field(default_factory=_default_model_size)
     language: str | None = "fr"  # Force French by default
     beam_size: int = 5  # Higher beam size for better accuracy
-    cpu_threads: int = field(default_factory=lambda: max(1, __import__('os').cpu_count() // 2))  # Dynamic based on CPU
+    cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))  # Dynamic based on CPU
     compute_type: str = "auto"
 
 

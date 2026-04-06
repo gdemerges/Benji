@@ -19,6 +19,7 @@ class TranscriptionHistory:
         }
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        os.chmod(self.history_file, 0o600)
         self._trim_if_needed()
 
     def _trim_if_needed(self):

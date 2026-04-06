@@ -1,3 +1,4 @@
+import hashlib
 import os
 
 import numpy as np
@@ -7,6 +8,9 @@ from queue import Queue, Full
 from benji.config import AudioConfig, VADConfig
 
 SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+SILERO_ONNX_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+_ALLOWED_HOSTS = {"github.com", "raw.githubusercontent.com", "objects.githubusercontent.com"}
+_MAX_REDIRECTS = 3
 
 
 class SileroVADOnnx:
@@ -43,18 +47,53 @@ class SileroVADOnnx:
         return float(out[0][0])
 
 
+def _verify_sha256(path: str, expected: str) -> bool:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest() == expected
+
+
 def _download_model() -> str:
     cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "benji")
     os.makedirs(cache_dir, exist_ok=True)
     model_path = os.path.join(cache_dir, "silero_vad.onnx")
-    if not os.path.exists(model_path):
-        print("[VAD] Downloading Silero VAD ONNX model...")
-        import httpx
-        with httpx.stream("GET", SILERO_ONNX_URL, follow_redirects=True) as r:
+
+    if os.path.exists(model_path):
+        if not _verify_sha256(model_path, SILERO_ONNX_SHA256):
+            print("[VAD] Cached model failed integrity check, re-downloading...")
+            os.remove(model_path)
+        else:
+            return model_path
+
+    print("[VAD] Downloading Silero VAD ONNX model...")
+    import httpx
+    from urllib.parse import urlparse
+
+    def _check_host(url: str) -> None:
+        host = urlparse(url).hostname or ""
+        if host not in _ALLOWED_HOSTS:
+            raise ValueError(f"[VAD] Redirect to untrusted host blocked: {host}")
+
+    with httpx.Client(max_redirects=_MAX_REDIRECTS, event_hooks={
+        "request": [lambda req: _check_host(str(req.url))]
+    }) as client:
+        with client.stream("GET", SILERO_ONNX_URL, follow_redirects=True) as r:
             r.raise_for_status()
-            with open(model_path, "wb") as f:
-                for chunk in r.iter_bytes():
-                    f.write(chunk)
+            tmp_path = model_path + ".tmp"
+            try:
+                with open(tmp_path, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        f.write(chunk)
+                if not _verify_sha256(tmp_path, SILERO_ONNX_SHA256):
+                    raise ValueError("[VAD] Downloaded model failed integrity check")
+                os.replace(tmp_path, model_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+
     return model_path
 
 

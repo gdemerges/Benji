@@ -58,7 +58,6 @@ def main():
     def unraisable_hook(unraisable):
         """Catch unraisable exceptions (like in Qt callbacks)."""
         print(f"[Error] Unraisable exception: {unraisable.exc_type.__name__}: {unraisable.exc_value}")
-        print(f"       in object: {unraisable.object}")
 
     sys.excepthook = qt_exception_hook
     sys.unraisablehook = unraisable_hook

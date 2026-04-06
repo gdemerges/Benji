@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +25,9 @@ def _build_prompt(tokenizer, transcription_text: str) -> str:
                 "- **Décisions / Actions** : les décisions prises ou actions à faire (si applicable)\n\n"
                 "Sois factuel et concis. "
                 "Si la transcription est trop courte pour être résumée, dis-le simplement.\n\n"
-                f"Transcription :\n{transcription_text}"
+                "Transcription :\n<transcription>\n"
+                f"{transcription_text}"
+                "\n</transcription>"
             ),
         },
     ]
@@ -82,5 +85,6 @@ def save_summary(summary: str) -> Path:
         f.write(f"# Résumé de session — {timestamp.strftime('%d/%m/%Y %H:%M')}\n\n")
         f.write(summary)
         f.write("\n")
+    os.chmod(file_path, 0o600)
 
     return file_path
