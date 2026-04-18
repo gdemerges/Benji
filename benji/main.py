@@ -27,7 +27,7 @@ def main():
 
     # Queues
     audio_queue = Queue(maxsize=100)
-    transcribe_queue = Queue(maxsize=2)  # Optimized: reduced buffering for lower latency
+    transcribe_queue = Queue(maxsize=3)  # Headroom for partial + final messages
     display_queue = Queue(maxsize=10)
 
     # Components

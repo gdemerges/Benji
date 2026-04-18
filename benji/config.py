@@ -13,28 +13,25 @@ def _default_font() -> str:
 
 def _default_model_size() -> str:
     """Auto-select model size based on available hardware."""
-    # Check for GPU
     has_gpu = False
     try:
-        import torch
-        has_gpu = torch.cuda.is_available()
-    except ImportError:
+        import ctranslate2
+        has_gpu = ctranslate2.get_cuda_device_count() > 0
+    except Exception:
         pass
 
-    # Check RAM
     ram_gb = psutil.virtual_memory().total / (1024**3)
 
-    # Decision tree - favor quality over speed
     if has_gpu:
-        return "large-v3"  # Best quality with GPU
-    else:
-        # CPU-only: depends on RAM
-        if ram_gb >= 16:
-            return "medium"  # Good quality on high-RAM systems
-        elif ram_gb >= 8:
-            return "small"
-        else:
-            return "base"  # Limited hardware
+        return "large-v3"
+    if IS_MACOS and ram_gb >= 16:
+        # Apple Silicon with MLX handles medium comfortably
+        return "medium"
+    if ram_gb >= 16:
+        return "medium"
+    if ram_gb >= 8:
+        return "small"
+    return "base"
 
 
 @dataclass
@@ -49,9 +46,10 @@ class AudioConfig:
 class VADConfig:
     speech_threshold: float = 0.5
     silence_duration_ms: int = 600  # Wait longer before cutting, reduces fragmentation
-    min_speech_duration_ms: int = 700  # Skip very short segments that Whisper can't transcribe reliably
+    min_speech_duration_ms: int = 300  # Keep short interjections ("oui", "ok", "non")
     max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
     pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
+    partial_interval_ms: int = 800  # Re-transcribe partial audio every N ms (0 = disabled)
 
 
 @dataclass

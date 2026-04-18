@@ -123,6 +123,10 @@ class VADProcessor:
         self.speech_buffer: list[np.ndarray] = []
         self.silence_chunks = 0
         self.pre_speech_buffer: list[np.ndarray] = []
+        self.samples_since_partial = 0
+        self._partial_sample_interval = int(
+            self.config.partial_interval_ms / 1000 * self.sample_rate
+        )
 
     def _chunk_duration_ms(self, chunk: np.ndarray) -> float:
         return len(chunk) / self.sample_rate * 1000
@@ -136,51 +140,76 @@ class VADProcessor:
             if not self.is_speaking:
                 self.is_speaking = True
                 self.speech_buffer = list(self.pre_speech_buffer)
+                self.samples_since_partial = 0
                 print("[VAD] Speech started")
-                # Send VAD status to display
                 if self.display_queue:
                     self.display_queue.put({"type": "vad_status", "speaking": True})
             self.speech_buffer.append(chunk)
+            self.samples_since_partial += len(chunk)
             self.silence_chunks = 0
         else:
             if self.is_speaking:
                 self.speech_buffer.append(chunk)
+                self.samples_since_partial += len(chunk)
                 self.silence_chunks += 1
                 silence_ms = self.silence_chunks * chunk_ms
 
                 if silence_ms >= self.config.silence_duration_ms:
-                    self._flush_segment()
+                    self._flush_segment(is_final=True)
+                    return
             else:
                 self.pre_speech_buffer.append(chunk)
                 max_pre = int(self.config.pre_speech_pad_ms / chunk_ms)
                 if len(self.pre_speech_buffer) > max_pre:
                     self.pre_speech_buffer.pop(0)
+                return
 
-        # Force flush long utterances
-        if self.is_speaking:
-            total_samples = sum(len(c) for c in self.speech_buffer)
-            if total_samples / self.sample_rate >= self.config.max_speech_duration_s:
-                self._flush_segment()
+        # Force flush long utterances as final
+        total_samples = sum(len(c) for c in self.speech_buffer)
+        if total_samples / self.sample_rate >= self.config.max_speech_duration_s:
+            self._flush_segment(is_final=True)
+            return
 
-    def _flush_segment(self):
+        # Incremental partial during ongoing speech
+        if (
+            self.config.partial_interval_ms > 0
+            and self.samples_since_partial >= self._partial_sample_interval
+        ):
+            self._emit_partial()
+
+    def _emit_partial(self):
+        if not self.speech_buffer:
+            return
         audio = np.concatenate(self.speech_buffer)
+        min_samples = int(self.config.min_speech_duration_ms / 1000 * self.sample_rate)
+        if len(audio) < min_samples:
+            return
+        self.samples_since_partial = 0
+        try:
+            self.transcribe_queue.put(
+                {"audio": audio, "is_final": False}, block=False
+            )
+        except Full:
+            # Transcriber is busy; it'll catch up on next partial or final
+            pass
+
+    def _flush_segment(self, is_final: bool = True):
+        audio = np.concatenate(self.speech_buffer) if self.speech_buffer else np.array([], dtype=np.float32)
         min_samples = int(self.config.min_speech_duration_ms / 1000 * self.sample_rate)
 
         if len(audio) >= min_samples:
             duration = len(audio) / self.sample_rate
-            print(f"[VAD] Speech segment: {duration:.1f}s")
-            try:
-                self.transcribe_queue.put(audio, block=False)
-            except Full:
-                print("[VAD] Transcribe queue full, dropping segment")
+            print(f"[VAD] Speech segment: {duration:.1f}s (final={is_final})")
+            # Finals must not be dropped; block briefly if transcriber is busy
+            self.transcribe_queue.put({"audio": audio, "is_final": is_final})
 
         self.speech_buffer = []
         self.silence_chunks = 0
         self.is_speaking = False
         self.pre_speech_buffer = []
+        self.samples_since_partial = 0
         self.model.reset_state()
 
-        # Send VAD status to display
         if self.display_queue:
             self.display_queue.put({"type": "vad_status", "speaking": False})
 
