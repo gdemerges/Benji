@@ -155,35 +155,130 @@ class SubtitleOverlay(QWidget):
         elif IS_WINDOWS:
             self._click_through_windows()
 
-    def _click_through_macos(self):
+    def _apply_macos_window_settings(self, verbose: bool = False):
+        """(Re)apply window level + collection behavior + private sticky tag.
+
+        Also forces activation policy to Accessory each time, because Qt can
+        reset it to Regular on certain events.
+        """
         try:
-            from AppKit import NSApp
+            from AppKit import NSApp, NSApplicationActivationPolicyAccessory
             import ctypes
             import ctypes.util
 
-            # Get CGShieldingWindowLevel (highest reliable level)
+            # Re-force Accessory policy (Qt may reset to Regular)
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            current_policy = int(NSApp.activationPolicy())
+
             cg_path = ctypes.util.find_library("CoreGraphics")
             cg = ctypes.CDLL(cg_path)
             cg.CGShieldingWindowLevel.restype = ctypes.c_int32
             max_level = cg.CGShieldingWindowLevel()
 
+            # Private SkyLight/CGS API for sticky-across-fullscreen windows.
+            # Tag 0x400 = Sticky. May be restricted on macOS 15+ (Sequoia/Tahoe).
+            sticky_ok = False
+            conn_id = 0
+            try:
+                cg.CGSMainConnectionID.restype = ctypes.c_uint32
+                conn_id = cg.CGSMainConnectionID()
+                cg.CGSSetWindowTags.argtypes = [
+                    ctypes.c_uint32,
+                    ctypes.c_uint32,
+                    ctypes.POINTER(ctypes.c_uint32),
+                    ctypes.c_int,
+                ]
+                cg.CGSSetWindowTags.restype = ctypes.c_int
+                sticky_ok = True
+            except Exception as e:
+                if verbose:
+                    print(f"[UI-debug] CGS private API unavailable: {e}")
+
+            window_debug = []
             for ns_window in NSApp.windows():
                 ns_window.setIgnoresMouseEvents_(True)
                 ns_window.setLevel_(max_level)
-
-                # Critical: CanJoinAllApplications (1<<11) is required
-                # for visibility across fullscreen Spaces
                 ns_window.setCollectionBehavior_(
-                    1 << 0   # CanJoinAllSpaces
-                    | 1 << 4  # Stationary
-                    | 1 << 6  # IgnoresCycle
-                    | 1 << 7  # FullScreenAuxiliary
-                    | 1 << 11 # CanJoinAllApplications
+                    (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
                 )
                 ns_window.setCanHide_(False)
                 ns_window.setHidesOnDeactivate_(False)
                 ns_window.setOpaque_(False)
-            print(f"[UI] Click-through enabled (macOS, level={max_level})")
+
+                tag_result = None
+                if sticky_ok:
+                    try:
+                        wid = int(ns_window.windowNumber())
+                        if wid > 0:
+                            tags = (ctypes.c_uint32 * 2)(0x00000400, 0x00000000)
+                            tag_result = cg.CGSSetWindowTags(conn_id, wid, tags, 32)
+                    except Exception as e:
+                        tag_result = f"err:{e}"
+
+                if verbose:
+                    window_debug.append({
+                        "wid": int(ns_window.windowNumber()),
+                        "level": int(ns_window.level()),
+                        "collection": int(ns_window.collectionBehavior()),
+                        "visible": bool(ns_window.isVisible()),
+                        "sticky_tag": tag_result,
+                    })
+
+            if verbose:
+                print(f"[UI-debug] policy={current_policy} (1=Accessory, 0=Regular)")
+                print(f"[UI-debug] max_level={max_level}, cgs_conn={conn_id}")
+                for w in window_debug:
+                    print(f"[UI-debug] window {w}")
+            return max_level
+        except Exception as e:
+            print(f"[UI] macOS window settings failed: {e}")
+            return None
+
+    def _click_through_macos(self):
+        try:
+            from AppKit import (
+                NSApp,
+                NSApplicationActivationPolicyAccessory,
+                NSWorkspace,
+            )
+
+            # Make the process an "accessory" app: no dock icon, behaves like
+            # a menu-bar agent, and — crucially — allowed to float over
+            # other apps' native fullscreen Spaces.
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+            level = self._apply_macos_window_settings(verbose=True)
+
+            # Re-assert settings when the active Space changes (entering/leaving
+            # another app's fullscreen). macOS resets window level on Space change.
+            try:
+                nc = NSWorkspace.sharedWorkspace().notificationCenter()
+
+                class _SpaceObserver:
+                    def __init__(self, cb):
+                        self.cb = cb
+
+                    def spaceDidChange_(self, _notification):
+                        self.cb()
+
+                # Keep a strong reference so PyObjC doesn't GC the observer
+                self._space_observer = _SpaceObserver(self._apply_macos_window_settings)
+                # Fallback: also re-apply on a timer (cheap, ~500ms)
+                from PyQt6.QtCore import QTimer
+                self._reassert_timer = QTimer(self)
+                self._reassert_timer.timeout.connect(self._apply_macos_window_settings)
+                self._reassert_timer.start(500)
+
+                # Verbose diagnostic dump every 5s
+                self._debug_timer = QTimer(self)
+                self._debug_timer.timeout.connect(
+                    lambda: self._apply_macos_window_settings(verbose=True)
+                )
+                self._debug_timer.start(5000)
+            except Exception as e:
+                print(f"[UI] Space-change observer not installed: {e}")
+
+            print(f"[UI] Click-through enabled (macOS, level={level}, policy=Accessory)")
         except Exception as e:
             print(f"[UI] macOS click-through failed: {e}")
 
@@ -296,6 +391,10 @@ class SubtitleOverlay(QWidget):
         self.poll_timer.stop()
         self.hide_timer.stop()
         self.fade_anim.stop()
+        if hasattr(self, "_reassert_timer"):
+            self._reassert_timer.stop()
+        if hasattr(self, "_debug_timer"):
+            self._debug_timer.stop()
         # Disconnect signals to prevent any pending emissions
         try:
             self.new_text_signal.disconnect()

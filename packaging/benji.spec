@@ -23,7 +23,8 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["torch", "torchvision", "torchaudio", "tensorflow"],
+    # Keep torch: mlx-whisper depends on it for tensor ops.
+    excludes=["torchvision", "torchaudio", "tensorflow"],
     cipher=block_cipher,
     noarchive=False,
 )

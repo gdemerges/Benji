@@ -1,8 +1,30 @@
 import sys
 import signal
 import threading
+import platform
 from datetime import datetime
 from queue import Queue
+
+
+def _promote_to_accessory_app():
+    """Convert the process to an 'accessory' app BEFORE any Qt/AppKit init.
+
+    On macOS 13+ this is required for a window to float over another app's
+    native fullscreen Space. Must run before QApplication is instantiated,
+    otherwise Qt locks the activation policy to 'regular'.
+    """
+    if platform.system() != "Darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(
+            NSApplicationActivationPolicyAccessory
+        )
+    except Exception as e:
+        print(f"[Benji] Could not set accessory policy: {e}")
+
+
+_promote_to_accessory_app()
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QShortcut, QKeySequence
@@ -16,6 +38,7 @@ from benji.stt.transcriber import Transcriber
 from benji.ui.overlay import SubtitleOverlay
 from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
+from benji.ui.tray import build_tray
 
 
 def main():
@@ -68,6 +91,9 @@ def main():
     live_summary_window = LiveSummaryWindow()
     live_summary_window.hide()
 
+    # Menu-bar tray icon (Quit / Show history / Show summary)
+    tray = build_tray(history_window, live_summary_window)  # noqa: F841 (keep ref)
+
     # Optional: rolling live summary
     live_summarizer = None
     if stt_config.live_summary_interval_s > 0:
@@ -87,6 +113,13 @@ def main():
 
     summary_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), overlay)
     summary_shortcut.activated.connect(lambda: _toggle(live_summary_window))
+
+    # Diagnostic: Ctrl+Shift+D dumps current macOS window state
+    if platform.system() == "Darwin":
+        debug_shortcut = QShortcut(QKeySequence("Ctrl+Shift+D"), overlay)
+        debug_shortcut.activated.connect(
+            lambda: overlay._apply_macos_window_settings(verbose=True)
+        )
 
     app.aboutToQuit.connect(lambda: overlay.cleanup() if not overlay._shutting_down else None)
 
