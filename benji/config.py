@@ -56,9 +56,14 @@ class VADConfig:
 class STTConfig:
     model_size: str = field(default_factory=_default_model_size)
     language: str | None = "fr"  # Force French by default
-    beam_size: int = 5  # Higher beam size for better accuracy
-    cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))  # Dynamic based on CPU
+    beam_size: int = 5  # Final-pass beam size (quality)
+    partial_beam_size: int = 1  # Partial-pass beam size (speed)
+    context_words: int = 6  # Sliding context injected as initial_prompt
+    cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))
     compute_type: str = "auto"
+    diarization: bool = False  # Pitch-based A/B speaker labeling
+    llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
+    live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
 
 
 @dataclass

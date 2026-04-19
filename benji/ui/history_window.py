@@ -7,21 +7,24 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QPushButton,
     QHBoxLayout,
+    QLabel,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
 from benji.history import TranscriptionHistory
+from benji.stats import SessionStats
 
 
 class HistoryWindow(QWidget):
     _summary_ready = pyqtSignal(str, str)  # (summary_text, file_path)
     _summary_error = pyqtSignal(str)
 
-    def __init__(self, session_start: datetime = None):
+    def __init__(self, session_start: datetime = None, stats: SessionStats | None = None):
         super().__init__()
         self.history = TranscriptionHistory()
         self.session_start = session_start or datetime.now()
+        self.stats = stats
         self.setWindowTitle("Transcription History")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.resize(600, 400)
@@ -53,7 +56,17 @@ class HistoryWindow(QWidget):
         button_layout.addWidget(close_btn)
         layout.addLayout(button_layout)
 
+        # Stats footer (updated every 2s)
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
+        layout.addWidget(self.stats_label)
+
         self.setLayout(layout)
+
+        self._stats_timer = QTimer(self)
+        self._stats_timer.timeout.connect(self._refresh_stats)
+        self._stats_timer.start(2000)
+        self._refresh_stats()
 
         self._summary_ready.connect(self._on_summary_ready)
         self._summary_error.connect(self._on_summary_error)
@@ -111,3 +124,9 @@ class HistoryWindow(QWidget):
     def clear_history(self):
         self.history.clear()
         self.text_edit.setPlainText("History cleared.")
+
+    def _refresh_stats(self):
+        if self.stats is None:
+            self.stats_label.setText("")
+            return
+        self.stats_label.setText(self.stats.format_footer())

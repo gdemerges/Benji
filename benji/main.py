@@ -11,31 +11,33 @@ from PyQt6.QtCore import QTimer
 from benji.config import AudioConfig, VADConfig, STTConfig, UIConfig
 from benji.audio.capture import AudioCapture
 from benji.audio.vad import VADProcessor
+from benji.stats import SessionStats
 from benji.stt.transcriber import Transcriber
 from benji.ui.overlay import SubtitleOverlay
 from benji.ui.history_window import HistoryWindow
+from benji.ui.live_summary_window import LiveSummaryWindow
 
 
 def main():
-    session_start = datetime.now()
-
-    # Configs
     audio_config = AudioConfig()
     vad_config = VADConfig()
     stt_config = STTConfig()
     ui_config = UIConfig()
 
-    # Queues
+    stats = SessionStats()
+    session_start = stats.session_start
+
     audio_queue = Queue(maxsize=100)
-    transcribe_queue = Queue(maxsize=3)  # Headroom for partial + final messages
+    transcribe_queue = Queue(maxsize=3)
     display_queue = Queue(maxsize=10)
 
-    # Components
     capture = AudioCapture(audio_queue, audio_config)
     vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue)
-    transcriber = Transcriber(transcribe_queue, display_queue, stt_config)
+    transcriber = Transcriber(
+        transcribe_queue, display_queue, stt_config,
+        stats=stats, sample_rate=audio_config.sample_rate,
+    )
 
-    # Worker threads
     vad_thread = threading.Thread(target=vad.run, daemon=True, name="VAD")
     stt_thread = threading.Thread(target=transcriber.run, daemon=True, name="STT")
 
@@ -44,19 +46,15 @@ def main():
     stt_thread.start()
     capture.start()
 
-    # UI on main thread
     app = QApplication(sys.argv)
     app.setApplicationName("Benji")
 
-    # Install exception hooks to prevent crashes from Qt callbacks
     def qt_exception_hook(exc_type, exc_value, exc_traceback):
-        """Catch exceptions in Qt callbacks to prevent abort()."""
         if not issubclass(exc_type, KeyboardInterrupt):
             print(f"[Error] Uncaught exception: {exc_type.__name__}: {exc_value}")
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     def unraisable_hook(unraisable):
-        """Catch unraisable exceptions (like in Qt callbacks)."""
         print(f"[Error] Unraisable exception: {unraisable.exc_type.__name__}: {unraisable.exc_value}")
 
     sys.excepthook = qt_exception_hook
@@ -64,20 +62,35 @@ def main():
 
     overlay = SubtitleOverlay(display_queue, ui_config)
 
-    # History window (initially hidden)
-    history_window = HistoryWindow(session_start=session_start)
+    history_window = HistoryWindow(session_start=session_start, stats=stats)
     history_window.hide()
 
-    # Global shortcut to show history: Cmd+Shift+H (macOS) or Ctrl+Shift+H (others)
-    history_shortcut = QShortcut(QKeySequence("Ctrl+Shift+H"), overlay)
-    history_shortcut.activated.connect(lambda: history_window.show() if history_window.isHidden() else history_window.hide())
+    live_summary_window = LiveSummaryWindow()
+    live_summary_window.hide()
 
-    # Clean shutdown: stop timers immediately when quit is requested
+    # Optional: rolling live summary
+    live_summarizer = None
+    if stt_config.live_summary_interval_s > 0:
+        from benji.llm.live_summary import LiveSummarizer
+        live_summarizer = LiveSummarizer(
+            interval_seconds=stt_config.live_summary_interval_s,
+            session_start=session_start,
+            on_summary=live_summary_window.on_summary,
+        )
+        live_summarizer.start()
+
+    def _toggle(window):
+        window.show() if window.isHidden() else window.hide()
+
+    history_shortcut = QShortcut(QKeySequence("Ctrl+Shift+H"), overlay)
+    history_shortcut.activated.connect(lambda: _toggle(history_window))
+
+    summary_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), overlay)
+    summary_shortcut.activated.connect(lambda: _toggle(live_summary_window))
+
     app.aboutToQuit.connect(lambda: overlay.cleanup() if not overlay._shutting_down else None)
 
-    # Handle system signals (Ctrl+C, termination)
     def signal_handler(sig, frame):
-        """Handle system signals for clean shutdown."""
         print("\n[Benji] Interrupt received, shutting down...")
         overlay.cleanup()
         QTimer.singleShot(0, app.quit)
@@ -85,12 +98,13 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    print("[Benji] Press Ctrl+Shift+H to view history")
+    print("[Benji] Ctrl+Shift+H: history · Ctrl+Shift+S: live summary")
 
     exit_code = app.exec()
 
-    # Cleanup
     print("[Benji] Shutting down...")
+    if live_summarizer:
+        live_summarizer.stop()
     capture.stop()
     audio_queue.put(None)
     transcribe_queue.put(None)

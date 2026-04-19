@@ -42,11 +42,11 @@ def postprocess_text(text: str, language: str = None) -> str:
     if text:
         text = text[0].upper() + text[1:]
 
-    # Capitalize after sentence-ending punctuation
+    # Capitalize after sentence-ending punctuation (Unicode-aware, preserve space)
     def capitalize_after_period(match):
-        return match.group(1) + match.group(2).upper()
+        return match.group(1) + match.group(2) + match.group(3).upper()
 
-    text = re.sub(r'([.!?])\s+([a-z])', capitalize_after_period, text)
+    text = re.sub(r'([.!?])(\s+)(\w)', capitalize_after_period, text, flags=re.UNICODE)
 
     # Language-specific improvements
     if language == 'en':

@@ -9,7 +9,13 @@ from typing import Iterator, Protocol
 class WhisperBackend(Protocol):
     name: str
 
-    def transcribe(self, audio, language: str | None) -> Iterator[str]:
+    def transcribe(
+        self,
+        audio,
+        language: str | None,
+        beam_size: int | None = None,
+        initial_prompt: str | None = None,
+    ) -> Iterator[str]:
         """Yield transcribed words as they become available."""
         ...
 
@@ -27,19 +33,21 @@ _MLX_MODEL_MAP = {
 class MLXWhisperBackend:
     name = "mlx"
 
-    def __init__(self, model_size: str):
+    def __init__(self, model_size: str, default_beam_size: int = 5):
         import mlx_whisper  # noqa: F401  (fail fast if not installed)
         self._mlx = __import__("mlx_whisper")
         self.repo = _MLX_MODEL_MAP.get(model_size, f"mlx-community/whisper-{model_size}-mlx")
+        self.default_beam_size = default_beam_size
         print(f"[STT] MLX backend using '{self.repo}' (Apple Silicon GPU)")
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
         result = self._mlx.transcribe(
             audio,
             path_or_hf_repo=self.repo,
             language=language,
             word_timestamps=True,
             condition_on_previous_text=False,
+            initial_prompt=initial_prompt,
             no_speech_threshold=0.6,
             logprob_threshold=-1.0,
             compression_ratio_threshold=2.4,
@@ -56,12 +64,11 @@ class MLXWhisperBackend:
 class FasterWhisperBackend:
     name = "faster-whisper"
 
-    def __init__(self, model_size: str, beam_size: int, cpu_threads: int):
+    def __init__(self, model_size: str, default_beam_size: int, cpu_threads: int):
         import ctranslate2
         from faster_whisper import WhisperModel
         from faster_whisper.utils import download_model
 
-        # Device detection via ctranslate2 (no torch dep)
         try:
             has_cuda = ctranslate2.get_cuda_device_count() > 0
         except Exception:
@@ -87,15 +94,16 @@ class FasterWhisperBackend:
             compute_type=compute_type,
             cpu_threads=cpu_threads if device == "cpu" else None,
         )
-        self.beam_size = beam_size
+        self.default_beam_size = default_beam_size
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
         segments, _ = self.model.transcribe(
             audio,
             language=language,
-            beam_size=self.beam_size,
+            beam_size=beam_size or self.default_beam_size,
             word_timestamps=True,
             condition_on_previous_text=False,
+            initial_prompt=initial_prompt,
             no_speech_threshold=0.6,
             log_prob_threshold=-1.0,
             compression_ratio_threshold=2.4,
@@ -110,10 +118,9 @@ class FasterWhisperBackend:
 
 
 def build_backend(model_size: str, beam_size: int, cpu_threads: int) -> WhisperBackend:
-    """Select best available backend. Prefer MLX on macOS, fall back to faster-whisper."""
     if platform.system() == "Darwin":
         try:
-            return MLXWhisperBackend(model_size)
+            return MLXWhisperBackend(model_size, default_beam_size=beam_size)
         except ImportError:
             print("[STT] mlx-whisper not installed, falling back to faster-whisper")
         except Exception as e:
