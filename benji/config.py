@@ -49,7 +49,12 @@ class VADConfig:
     min_speech_duration_ms: int = 300  # Keep short interjections ("oui", "ok", "non")
     max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
     pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
-    partial_interval_ms: int = 800  # Re-transcribe partial audio every N ms (0 = disabled)
+    partial_interval_ms: int = 400  # Re-transcribe partial audio every N ms (0 = disabled)
+    # Adaptive threshold: lifts speech_threshold above the noise floor in noisy rooms.
+    # Effective threshold = max(speech_threshold, p95(non_speech_conf) + adaptive_margin).
+    adaptive_threshold: bool = True
+    adaptive_margin: float = 0.10
+    adaptive_window_seconds: float = 5.0  # Rolling window for noise-floor estimation
 
 
 @dataclass
@@ -64,6 +69,13 @@ class STTConfig:
     diarization: bool = False  # Pitch-based A/B speaker labeling
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
+    # User glossary: proper nouns / domain terms injected as initial_prompt context
+    # to bias Whisper toward correct spellings (e.g. ["Demergès", "Anthropic", "MLX"]).
+    glossary: list[str] = field(default_factory=list)
+    # Audio gain control before STT: peak-normalize quiet segments to this target.
+    # 0.0 disables. Useful for low-gain microphones.
+    agc_target_peak: float = 0.7
+    agc_min_peak: float = 0.3  # Only boost when current peak is below this
 
 
 @dataclass

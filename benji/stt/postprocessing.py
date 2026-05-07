@@ -3,6 +3,45 @@
 import re
 
 
+# Common Whisper hallucinations on silence / low-signal audio.
+# Matched as substrings against the lower-cased, dot-stripped output.
+HALLUCINATION_PATTERNS = (
+    "sous-titres réalisés par",
+    "sous-titres fait par",
+    "sous-titrage st'",
+    "sous-titrage société radio",
+    "sous-titres faits par",
+    "❤️ par sous-titres",
+    "amara.org",
+    "merci d'avoir regardé",
+    "merci de votre attention",
+    "merci à tous",
+    "abonnez-vous",
+    "n'oubliez pas de vous abonner",
+    "à la prochaine",
+    "thanks for watching",
+    "thank you for watching",
+    "subscribe to",
+    "please subscribe",
+    "like and subscribe",
+)
+
+
+def is_hallucination(text: str) -> bool:
+    """Return True if *text* looks like a known Whisper hallucination or
+    a degenerate repetition (same token >= 4 times in a row)."""
+    if not text:
+        return True
+    normalized = text.lower().strip().rstrip(".!?")
+    if any(pattern in normalized for pattern in HALLUCINATION_PATTERNS):
+        return True
+    # Repetition detector: any word repeated 4+ times in a row → hallucination.
+    # Whisper's classic failure mode on noise is to emit the same token in a loop.
+    if re.search(r"\b(\w{2,})\b(?:\W+\1\b){3,}", normalized, flags=re.IGNORECASE):
+        return True
+    return False
+
+
 def postprocess_text(text: str, language: str = None) -> str:
     """
     Enhance transcription with better punctuation and capitalization.

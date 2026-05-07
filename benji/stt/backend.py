@@ -15,8 +15,12 @@ class WhisperBackend(Protocol):
         language: str | None,
         beam_size: int | None = None,
         initial_prompt: str | None = None,
-    ) -> Iterator[str]:
-        """Yield transcribed words as they become available."""
+    ) -> Iterator[dict]:
+        """Yield word dicts {"text": str, "start": float, "end": float} as they become available.
+
+        start/end are seconds relative to the start of the audio buffer; either may be None
+        if the backend did not produce timestamps for that word.
+        """
         ...
 
 
@@ -58,7 +62,7 @@ class MLXWhisperBackend:
             for w in seg.get("words", []) or []:
                 text = (w.get("word") or "").strip()
                 if text:
-                    yield text
+                    yield {"text": text, "start": w.get("start"), "end": w.get("end")}
 
 
 class FasterWhisperBackend:
@@ -114,7 +118,11 @@ class FasterWhisperBackend:
                 for w in segment.words:
                     text = (w.word or "").strip()
                     if text:
-                        yield text
+                        yield {
+                            "text": text,
+                            "start": getattr(w, "start", None),
+                            "end": getattr(w, "end", None),
+                        }
 
 
 def build_backend(model_size: str, beam_size: int, cpu_threads: int) -> WhisperBackend:

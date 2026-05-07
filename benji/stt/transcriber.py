@@ -9,22 +9,7 @@ from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend
 from benji.stt.diarization import SpeakerTagger
-from benji.stt.postprocessing import postprocess_text
-
-
-_HALLUCINATION_PATTERNS = [
-    "sous-titres réalisés par",
-    "sous-titres fait par",
-    "merci d'avoir regardé",
-    "merci de votre attention",
-    "thanks for watching",
-    "thank you for watching",
-]
-
-
-def _is_hallucination(text: str) -> bool:
-    normalized = text.lower().strip().rstrip(".")
-    return any(pattern in normalized for pattern in _HALLUCINATION_PATTERNS)
+from benji.stt.postprocessing import is_hallucination, postprocess_text
 
 
 class Transcriber:
@@ -58,29 +43,66 @@ class Transcriber:
         print("[STT] Model loaded")
 
     def _initial_prompt(self) -> str | None:
-        if not self._context:
+        """Build initial_prompt = glossary terms + recent context words.
+
+        Glossary biases Whisper toward correct spellings of proper nouns / domain
+        terms; sliding context smooths transitions between segments.
+        """
+        parts: list[str] = []
+        if self.config.glossary:
+            parts.append(", ".join(self.config.glossary) + ".")
+        if self._context:
+            parts.append(" ".join(self._context))
+        if not parts:
             return None
-        return " ".join(self._context)
+        return " ".join(parts)
+
+    def _apply_agc(self, audio: np.ndarray) -> np.ndarray:
+        """Peak-normalize quiet audio so Whisper sees a consistent level.
+
+        Boost-only: only quiet segments are scaled up; loud segments pass through.
+        Avoids amplifying near-silence (peak < 0.01) which would just amplify noise.
+        """
+        target = self.config.agc_target_peak
+        if target <= 0.0 or audio.size == 0:
+            return audio
+        peak = float(np.max(np.abs(audio)))
+        if peak < 0.01 or peak >= self.config.agc_min_peak:
+            return audio
+        gain = min(target / peak, 8.0)  # Cap gain at 8x to limit noise blow-up
+        return (audio * gain).astype(np.float32, copy=False)
 
     def _run_segment(self, audio: np.ndarray, is_final: bool):
         start_t = time.monotonic()
+        audio = self._apply_agc(audio)
         self.display_queue.put({"type": "segment_start"})
         beam = self.config.beam_size if is_final else self.config.partial_beam_size
-        words: list[str] = []
-        for word_text in self.backend.transcribe(
+        words: list[dict] = []
+        for word in self.backend.transcribe(
             audio,
             language=self.config.language,
             beam_size=beam,
             initial_prompt=self._initial_prompt(),
         ):
-            words.append(word_text)
-            self.display_queue.put({"type": "word", "text": word_text})
+            words.append(word)
+            # Forward the full dict (text + timestamps) to the overlay.
+            self.display_queue.put({
+                "type": "word",
+                "text": word["text"],
+                "start": word.get("start"),
+                "end": word.get("end"),
+            })
 
         if not is_final or not words:
             return
 
-        full_text = postprocess_text(" ".join(words), language=self.config.language)
-        if _is_hallucination(full_text):
+        full_text = postprocess_text(
+            " ".join(w["text"] for w in words), language=self.config.language
+        )
+        if is_hallucination(full_text):
+            # Tell the overlay to drop the streamed (hallucinated) words instead
+            # of leaving them on screen.
+            self.display_queue.put({"type": "final_text", "text": "", "drop": True})
             return
 
         # Speaker label (best-effort, pitch-based)
@@ -97,12 +119,15 @@ class Transcriber:
             except Exception as e:
                 print(f"[STT] LLM correction skipped: {e}")
 
+        # Replace the streamed (raw) overlay text with the post-processed/corrected one.
+        self.display_queue.put({"type": "final_text", "text": full_text})
+
         print(f'[STT] "{full_text}"')
         self.history.add(full_text)
 
         # Update sliding context from the raw (pre-label) words
         for w in words[-self.config.context_words:]:
-            self._context.append(w)
+            self._context.append(w["text"])
 
         # Stats
         if self.stats is not None:

@@ -1,5 +1,6 @@
 import hashlib
 import os
+from collections import deque
 
 import numpy as np
 import onnxruntime as ort
@@ -128,15 +129,37 @@ class VADProcessor:
             self.config.partial_interval_ms / 1000 * self.sample_rate
         )
 
+        # Adaptive threshold: rolling buffer of VAD confidence on non-speech chunks.
+        # Effective threshold = max(base, p95(noise) + margin). Robust to a noisy room.
+        chunk_ms_est = self.audio_config.chunk_size / self.sample_rate * 1000
+        self._noise_window_size = max(
+            10, int(self.config.adaptive_window_seconds * 1000 / max(chunk_ms_est, 1))
+        )
+        self._noise_confidences: deque[float] = deque(maxlen=self._noise_window_size)
+
     def _chunk_duration_ms(self, chunk: np.ndarray) -> float:
         return len(chunk) / self.sample_rate * 1000
+
+    def _effective_threshold(self) -> float:
+        """Lift the speech threshold above the noise floor when the room is noisy.
+
+        Uses the 95th percentile of recent non-speech VAD confidences as the
+        noise estimate, then adds a margin. Falls back to the static threshold
+        until enough samples have been seen.
+        """
+        base = self.config.speech_threshold
+        if not self.config.adaptive_threshold or len(self._noise_confidences) < 20:
+            return base
+        noise_p95 = float(np.quantile(self._noise_confidences, 0.95))
+        return max(base, min(0.95, noise_p95 + self.config.adaptive_margin))
 
     def process_chunk(self, chunk: np.ndarray) -> None:
         confidence = self.model(chunk)
 
         chunk_ms = self._chunk_duration_ms(chunk)
+        threshold = self._effective_threshold()
 
-        if confidence >= self.config.speech_threshold:
+        if confidence >= threshold:
             if not self.is_speaking:
                 self.is_speaking = True
                 self.speech_buffer = list(self.pre_speech_buffer)
@@ -158,6 +181,8 @@ class VADProcessor:
                     self._flush_segment(is_final=True)
                     return
             else:
+                # Idle: update noise floor estimate and ring-buffer pre-speech audio.
+                self._noise_confidences.append(confidence)
                 self.pre_speech_buffer.append(chunk)
                 max_pre = int(self.config.pre_speech_pad_ms / chunk_ms)
                 if len(self.pre_speech_buffer) > max_pre:

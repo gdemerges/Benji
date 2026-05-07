@@ -345,6 +345,23 @@ class SubtitleOverlay(QWidget):
                 self.fade_anim.stop()
                 self.setWindowOpacity(1.0)
                 self.hide_timer.start(self.config.display_duration_ms)
+            elif msg_type == "final_text":
+                # Replace the streamed (raw) text with the post-processed/corrected
+                # final version. If `drop` is set, the segment was a hallucination —
+                # clear the overlay immediately instead of leaving garbage on screen.
+                if message.get("drop"):
+                    self.current_text = []
+                    self.label.setText("")
+                    self.fade_anim.stop()
+                    self.setWindowOpacity(0.0)
+                    return
+                text = message.get("text") or ""
+                self.current_text = text.split() if text else []
+                self.label.setText(text)
+                self._reposition()
+                self.fade_anim.stop()
+                self.setWindowOpacity(1.0)
+                self.hide_timer.start(self.config.display_duration_ms)
         except Exception as e:
             if not self._shutting_down:
                 print(f"[UI] Error in _update_word: {e}")
