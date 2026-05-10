@@ -8,7 +8,7 @@ from benji.config import STTConfig
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend
-from benji.stt.diarization import SpeakerTagger
+from benji.stt.diarization import build_tagger
 from benji.stt.postprocessing import is_hallucination, postprocess_text
 
 
@@ -31,16 +31,41 @@ class Transcriber:
         # Sliding context: last N validated words injected as initial_prompt
         self._context = deque(maxlen=self.config.context_words)
 
-        # Optional diarization
-        self.tagger = SpeakerTagger() if self.config.diarization else None
+        # Optional diarization (pitch or pyannote)
+        self.tagger = (
+            build_tagger(
+                self.config.diarization_backend,
+                max_speakers=self.config.diarization_max_speakers,
+            )
+            if self.config.diarization
+            else None
+        )
 
         print(f"[STT] Loading Whisper model '{self.config.model_size}'...")
         self.backend = build_backend(
             model_size=self.config.model_size,
             beam_size=self.config.beam_size,
             cpu_threads=self.config.cpu_threads,
+            compute_type=self.config.compute_type,
         )
         print("[STT] Model loaded")
+
+    def warmup(self, seconds: float = 1.0) -> None:
+        """Run a one-shot inference on silence to amortize JIT/graph compilation.
+
+        Without this, the first real utterance pays the compile cost and feels laggy.
+        """
+        try:
+            n = int(seconds * self.sample_rate)
+            silence = np.zeros(n, dtype=np.float32)
+            t0 = time.monotonic()
+            for _ in self.backend.transcribe(
+                silence, language=self.config.language, beam_size=1, initial_prompt=None
+            ):
+                pass
+            print(f"[STT] Warm-up done in {(time.monotonic() - t0) * 1000:.0f} ms")
+        except Exception as e:
+            print(f"[STT] Warm-up skipped: {e}")
 
     def _initial_prompt(self) -> str | None:
         """Build initial_prompt = glossary terms + recent context words.
@@ -93,7 +118,13 @@ class Transcriber:
                 "end": word.get("end"),
             })
 
-        if not is_final or not words:
+        if not is_final:
+            if self.stats is not None and words:
+                latency_ms = (time.monotonic() - start_t) * 1000
+                audio_seconds = len(audio) / self.sample_rate
+                self.stats.record_segment(audio_seconds, latency_ms, is_final=False)
+            return
+        if not words:
             return
 
         full_text = postprocess_text(

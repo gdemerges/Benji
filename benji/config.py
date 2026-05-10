@@ -66,7 +66,11 @@ class STTConfig:
     context_words: int = 6  # Sliding context injected as initial_prompt
     cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))
     compute_type: str = "auto"
-    diarization: bool = False  # Pitch-based A/B speaker labeling
+    diarization: bool = False  # Enable speaker labeling
+    # "pitch" (built-in F0 clustering, no extra deps) or "pyannote" (real embeddings,
+    # requires `pip install pyannote.audio` and HF token via env HF_TOKEN).
+    diarization_backend: str = "pitch"
+    diarization_max_speakers: int = 4  # Cap for pyannote clustering (pitch is hard-capped at 2)
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
     # User glossary: proper nouns / domain terms injected as initial_prompt context

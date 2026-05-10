@@ -38,6 +38,7 @@ from benji.stt.transcriber import Transcriber
 from benji.ui.overlay import SubtitleOverlay
 from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
+from benji.ui.splash import SplashWindow
 from benji.ui.tray import build_tray
 
 
@@ -56,21 +57,55 @@ def main():
 
     capture = AudioCapture(audio_queue, audio_config)
     vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue)
-    transcriber = Transcriber(
-        transcribe_queue, display_queue, stt_config,
-        stats=stats, sample_rate=audio_config.sample_rate,
-    )
+
+    print("[Benji] Starting...")
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("Benji")
+
+    # Splash: load Whisper on a background thread so the UI stays responsive
+    # and the user sees clear progress instead of a frozen process.
+    splash = SplashWindow()
+    splash.set_status(f"Chargement du modèle Whisper '{stt_config.model_size}'…")
+    splash.show()
+    app.processEvents()
+
+    transcriber_holder: dict = {}
+    load_error: dict = {}
+
+    def _load_model():
+        try:
+            t = Transcriber(
+                transcribe_queue, display_queue, stt_config,
+                stats=stats, sample_rate=audio_config.sample_rate,
+            )
+            splash.set_status("Préchauffage du modèle…")
+            t.warmup()
+            transcriber_holder["t"] = t
+        except Exception as e:
+            load_error["e"] = e
+
+    load_thread = threading.Thread(target=_load_model, name="ModelLoad")
+    load_thread.start()
+    while load_thread.is_alive():
+        app.processEvents()
+        load_thread.join(timeout=0.05)
+
+    if "e" in load_error:
+        splash.close()
+        raise load_error["e"]
+
+    transcriber = transcriber_holder["t"]
+    splash.set_status("Démarrage de la capture audio…")
+    app.processEvents()
 
     vad_thread = threading.Thread(target=vad.run, daemon=True, name="VAD")
     stt_thread = threading.Thread(target=transcriber.run, daemon=True, name="STT")
-
-    print("[Benji] Starting...")
     vad_thread.start()
     stt_thread.start()
     capture.start()
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("Benji")
+    splash.close()
 
     def qt_exception_hook(exc_type, exc_value, exc_traceback):
         if not issubclass(exc_type, KeyboardInterrupt):
@@ -102,6 +137,8 @@ def main():
             interval_seconds=stt_config.live_summary_interval_s,
             session_start=session_start,
             on_summary=live_summary_window.on_summary,
+            on_summary_start=live_summary_window.on_summary_start,
+            on_summary_chunk=live_summary_window.on_summary_chunk,
         )
         live_summarizer.start()
 

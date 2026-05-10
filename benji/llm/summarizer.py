@@ -5,8 +5,24 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 MODEL_ID = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+
+# Cache the loaded MLX-LM model across calls — first load is ~1-2s, subsequent
+# summaries reuse the same weights.
+_MODEL_CACHE: dict = {}
+
+
+def _get_model():
+    if "model" not in _MODEL_CACHE:
+        from mlx_lm import load
+        print(f"[Summary] Chargement du modèle '{MODEL_ID}'...")
+        print("[Summary] (Le premier lancement télécharge le modèle, ~800MB)")
+        model, tokenizer = load(MODEL_ID)
+        _MODEL_CACHE["model"] = model
+        _MODEL_CACHE["tokenizer"] = tokenizer
+    return _MODEL_CACHE["model"], _MODEL_CACHE["tokenizer"]
 
 
 def _build_prompt(tokenizer, transcription_text: str) -> str:
@@ -43,8 +59,16 @@ def _build_prompt(tokenizer, transcription_text: str) -> str:
     return f"Résume cette conversation en français :\n\n{transcription_text}\n\nRésumé :"
 
 
-def summarize(entries: list[dict]) -> str | None:
-    """Generate a summary of a transcription session using MLX-LM."""
+def summarize(
+    entries: list[dict],
+    on_token: Callable[[str], None] | None = None,
+) -> str | None:
+    """Generate a summary of a transcription session using MLX-LM.
+
+    If `on_token` is provided, streams the output token-by-token via
+    `mlx_lm.stream_generate` and calls the callback for each chunk.
+    Returns the full summary text once generation completes.
+    """
     if not entries:
         print("[Summary] Aucune transcription à résumer.")
         return None
@@ -55,21 +79,31 @@ def summarize(entries: list[dict]) -> str | None:
         return None
 
     try:
-        from mlx_lm import load, generate
+        from mlx_lm import generate, stream_generate
     except ImportError:
         print("[Summary] mlx-lm non installé. Exécute : pip install mlx-lm")
         return None
 
-    print(f"[Summary] Chargement du modèle '{MODEL_ID}'...")
-    print("[Summary] (Le premier lancement télécharge le modèle, ~800MB)")
-
-    model, tokenizer = load(MODEL_ID)
+    model, tokenizer = _get_model()
 
     print("[Summary] Génération du résumé...")
     prompt = _build_prompt(tokenizer, transcription_text)
-    summary = generate(model, tokenizer, prompt=prompt, max_tokens=512, verbose=False)
 
-    return summary.strip()
+    if on_token is None:
+        return generate(model, tokenizer, prompt=prompt, max_tokens=512, verbose=False).strip()
+
+    chunks: list[str] = []
+    for response in stream_generate(model, tokenizer, prompt=prompt, max_tokens=512):
+        # mlx_lm.stream_generate yields a `GenerationResponse` with a `.text` field
+        # (incremental text since the previous yield).
+        piece = getattr(response, "text", None) or str(response)
+        if piece:
+            chunks.append(piece)
+            try:
+                on_token(piece)
+            except Exception as e:
+                print(f"[Summary] on_token callback failed: {e}")
+    return "".join(chunks).strip()
 
 
 def save_summary(summary: str) -> Path:

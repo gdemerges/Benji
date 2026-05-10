@@ -1,14 +1,23 @@
-"""Lightweight pitch-based speaker labeling.
+"""Speaker labeling backends.
 
-Not a real diarization system — estimates median fundamental frequency (F0)
-of a segment via autocorrelation, then clusters into up to 2 speakers based
-on a rolling baseline. Good enough for two-speaker recordings with
-clearly different voices (e.g. male/female).
+Two implementations:
+- `SpeakerTagger` (pitch): F0 autocorrelation + 2-speaker clustering. No deps,
+  works offline on Apple Silicon, but unreliable when voices have similar pitch.
+- `PyannoteSpeakerTagger`: pyannote.audio speaker embeddings + cosine clustering.
+  Real diarization quality, supports >2 speakers. Requires `pyannote.audio` and
+  an HF token (env `HF_TOKEN`) for first-time model download.
 """
 
 from __future__ import annotations
 
+import os
+from typing import Protocol
+
 import numpy as np
+
+
+class DiarizationBackend(Protocol):
+    def label(self, audio: np.ndarray, sample_rate: int = 16000) -> str | None: ...
 
 
 def _estimate_f0(audio: np.ndarray, sample_rate: int = 16000,
@@ -79,3 +88,98 @@ class SpeakerTagger:
         # Already 2 speakers — assign to closest anyway
         self._last_label = best_label
         return best_label
+
+
+class PyannoteSpeakerTagger:
+    """Real speaker labeling using pyannote.audio embeddings + cosine clustering.
+
+    For each segment we compute a 512-d embedding, then assign it to the closest
+    existing centroid (cosine sim > threshold) or spawn a new speaker (up to
+    `max_speakers`). Centroids update via running mean.
+    """
+
+    def __init__(
+        self,
+        max_speakers: int = 4,
+        cosine_threshold: float = 0.55,
+        model_id: str = "pyannote/embedding",
+    ):
+        try:
+            from pyannote.audio import Inference
+        except ImportError as e:
+            raise RuntimeError(
+                "pyannote.audio is required for diarization_backend='pyannote'. "
+                "Install with: pip install pyannote.audio"
+            ) from e
+
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+        if not token:
+            print("[Diarization] No HF_TOKEN set — pyannote model download may fail")
+
+        # `whole` averages embeddings across the full clip — what we want per segment.
+        self._inference = Inference(model_id, window="whole", use_auth_token=token)
+        self.max_speakers = max_speakers
+        self.cosine_threshold = cosine_threshold
+        self._centroids: dict[str, np.ndarray] = {}
+        self._counts: dict[str, int] = {}
+        self._next_id = 0
+        print(f"[Diarization] pyannote.audio loaded ('{model_id}')")
+
+    @staticmethod
+    def _cos(a: np.ndarray, b: np.ndarray) -> float:
+        denom = (np.linalg.norm(a) * np.linalg.norm(b)) or 1.0
+        return float(np.dot(a, b) / denom)
+
+    def _new_label(self) -> str:
+        # A, B, C, ... up to max_speakers, then numeric.
+        if self._next_id < 26:
+            label = chr(ord("A") + self._next_id)
+        else:
+            label = f"S{self._next_id}"
+        self._next_id += 1
+        return label
+
+    def label(self, audio: np.ndarray, sample_rate: int = 16000) -> str | None:
+        if len(audio) < sample_rate // 2:  # <500 ms — too short for stable embedding
+            return None
+        try:
+            # pyannote expects torch tensor with shape (channel, samples)
+            import torch
+            waveform = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
+            emb = self._inference({"waveform": waveform, "sample_rate": sample_rate})
+            emb = np.asarray(emb).flatten()
+        except Exception as e:
+            print(f"[Diarization] pyannote inference failed: {e}")
+            return None
+
+        if not self._centroids:
+            label = self._new_label()
+            self._centroids[label] = emb
+            self._counts[label] = 1
+            return label
+
+        best_label, best_sim = max(
+            ((lbl, self._cos(emb, c)) for lbl, c in self._centroids.items()),
+            key=lambda x: x[1],
+        )
+
+        if best_sim >= self.cosine_threshold or len(self._centroids) >= self.max_speakers:
+            n = self._counts[best_label] + 1
+            self._centroids[best_label] = self._centroids[best_label] * (n - 1) / n + emb / n
+            self._counts[best_label] = n
+            return best_label
+
+        label = self._new_label()
+        self._centroids[label] = emb
+        self._counts[label] = 1
+        return label
+
+
+def build_tagger(backend: str, max_speakers: int = 4) -> DiarizationBackend:
+    """Factory: returns a diarization tagger, falling back to pitch on error."""
+    if backend == "pyannote":
+        try:
+            return PyannoteSpeakerTagger(max_speakers=max_speakers)
+        except Exception as e:
+            print(f"[Diarization] pyannote unavailable ({e}), falling back to pitch")
+    return SpeakerTagger()

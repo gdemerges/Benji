@@ -17,11 +17,15 @@ class LiveSummarizer:
         interval_seconds: int,
         session_start: datetime,
         on_summary: Callable[[str, datetime], None],
+        on_summary_chunk: Callable[[str], None] | None = None,
+        on_summary_start: Callable[[datetime], None] | None = None,
         min_new_entries: int = 3,
     ):
         self.interval = interval_seconds
         self.session_start = session_start
         self.on_summary = on_summary
+        self.on_summary_chunk = on_summary_chunk
+        self.on_summary_start = on_summary_start
         self.min_new_entries = min_new_entries
         self.history = TranscriptionHistory()
         self._stop = threading.Event()
@@ -43,7 +47,9 @@ class LiveSummarizer:
                 entries = self.history.get_since(self._last_run_at)
                 if len(entries) < self.min_new_entries:
                     continue
-                summary = summarize(entries)
+                if self.on_summary_start is not None:
+                    self.on_summary_start(datetime.now())
+                summary = summarize(entries, on_token=self.on_summary_chunk)
                 if summary:
                     now = datetime.now()
                     self.on_summary(summary, now)
