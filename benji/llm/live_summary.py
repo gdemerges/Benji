@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 from benji.history import TranscriptionHistory
 from benji.llm.summarizer import summarize
@@ -55,4 +58,4 @@ class LiveSummarizer:
                     self.on_summary(summary, now)
                     self._last_run_at = now
             except Exception as e:
-                print(f"[LiveSummary] Error: {e}")
+                log.error("Error: %s", e)

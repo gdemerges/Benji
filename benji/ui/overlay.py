@@ -1,3 +1,4 @@
+import logging
 import platform
 from queue import Queue, Empty
 
@@ -6,6 +7,8 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QPropertyAnimation, Q
 from PyQt6.QtGui import QFont, QPainter, QColor
 
 from benji.config import UIConfig, IS_MACOS, IS_WINDOWS
+
+log = logging.getLogger(__name__)
 
 
 class VADIndicator(QWidget):
@@ -119,7 +122,7 @@ class SubtitleOverlay(QWidget):
             self.vad_indicator.set_speaking(speaking)
         except Exception as e:
             if not self._shutting_down:
-                print(f"[UI] Error in _update_vad_status: {e}")
+                log.exception("Error in _update_vad_status")
 
     def closeEvent(self, event):
         """Handle window close event - cleanup before Qt destroys objects."""
@@ -192,7 +195,7 @@ class SubtitleOverlay(QWidget):
                 sticky_ok = True
             except Exception as e:
                 if verbose:
-                    print(f"[UI-debug] CGS private API unavailable: {e}")
+                    log.debug("CGS private API unavailable: %s", e)
 
             window_debug = []
             for ns_window in NSApp.windows():
@@ -225,13 +228,13 @@ class SubtitleOverlay(QWidget):
                     })
 
             if verbose:
-                print(f"[UI-debug] policy={current_policy} (1=Accessory, 0=Regular)")
-                print(f"[UI-debug] max_level={max_level}, cgs_conn={conn_id}")
+                log.debug("policy=%s (1=Accessory, 0=Regular)", current_policy)
+                log.debug("max_level=%s, cgs_conn=%s", max_level, conn_id)
                 for w in window_debug:
-                    print(f"[UI-debug] window {w}")
+                    log.debug("window %s", w)
             return max_level
         except Exception as e:
-            print(f"[UI] macOS window settings failed: {e}")
+            log.warning("macOS window settings failed: %s", e)
             return None
 
     def _click_through_macos(self):
@@ -276,11 +279,11 @@ class SubtitleOverlay(QWidget):
                 )
                 self._debug_timer.start(5000)
             except Exception as e:
-                print(f"[UI] Space-change observer not installed: {e}")
+                log.warning("Space-change observer not installed: %s", e)
 
-            print(f"[UI] Click-through enabled (macOS, level={level}, policy=Accessory)")
+            log.info("Click-through enabled (macOS, level=%s, policy=Accessory)", level)
         except Exception as e:
-            print(f"[UI] macOS click-through failed: {e}")
+            log.warning("macOS click-through failed: %s", e)
 
     def _click_through_windows(self):
         try:
@@ -304,9 +307,9 @@ class SubtitleOverlay(QWidget):
                 0, 0, 0, 0,
                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
             )
-            print("[UI] Click-through enabled (Windows)")
+            log.info("Click-through enabled (Windows)")
         except Exception as e:
-            print(f"[UI] Windows click-through failed: {e}")
+            log.warning("Windows click-through failed: %s", e)
 
     @pyqtSlot(str)
     def _update_text(self, text: str):
@@ -321,7 +324,7 @@ class SubtitleOverlay(QWidget):
             self.hide_timer.start(self.config.display_duration_ms)
         except Exception as e:
             if not self._shutting_down:
-                print(f"[UI] Error in _update_text: {e}")
+                log.exception("Error in _update_text")
 
     @pyqtSlot(dict)
     def _update_word(self, message: dict):
@@ -364,7 +367,7 @@ class SubtitleOverlay(QWidget):
                 self.hide_timer.start(self.config.display_duration_ms)
         except Exception as e:
             if not self._shutting_down:
-                print(f"[UI] Error in _update_word: {e}")
+                log.exception("Error in _update_word")
 
     def _poll_queue(self):
         if self._shutting_down:
@@ -388,7 +391,7 @@ class SubtitleOverlay(QWidget):
                     self.new_text_signal.emit(item)
         except Exception as e:
             if not self._shutting_down:
-                print(f"[UI] Error in poll_queue: {e}")
+                log.exception("Error in poll_queue")
 
     def _start_fade(self):
         if self._shutting_down:
@@ -400,7 +403,7 @@ class SubtitleOverlay(QWidget):
             self.fade_anim.start()
         except Exception as e:
             if not self._shutting_down:
-                print(f"[UI] Error in _start_fade: {e}")
+                log.exception("Error in _start_fade")
 
     def cleanup(self):
         """Stop all timers and animations before shutdown."""

@@ -10,10 +10,13 @@ Two implementations:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Protocol
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 class DiarizationBackend(Protocol):
@@ -114,7 +117,7 @@ class PyannoteSpeakerTagger:
 
         token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
         if not token:
-            print("[Diarization] No HF_TOKEN set — pyannote model download may fail")
+            log.warning("No HF_TOKEN set — pyannote model download may fail")
 
         # `whole` averages embeddings across the full clip — what we want per segment.
         self._inference = Inference(model_id, window="whole", use_auth_token=token)
@@ -123,7 +126,7 @@ class PyannoteSpeakerTagger:
         self._centroids: dict[str, np.ndarray] = {}
         self._counts: dict[str, int] = {}
         self._next_id = 0
-        print(f"[Diarization] pyannote.audio loaded ('{model_id}')")
+        log.info("pyannote.audio loaded ('%s')", model_id)
 
     @staticmethod
     def _cos(a: np.ndarray, b: np.ndarray) -> float:
@@ -149,7 +152,7 @@ class PyannoteSpeakerTagger:
             emb = self._inference({"waveform": waveform, "sample_rate": sample_rate})
             emb = np.asarray(emb).flatten()
         except Exception as e:
-            print(f"[Diarization] pyannote inference failed: {e}")
+            log.warning("pyannote inference failed: %s", e)
             return None
 
         if not self._centroids:
@@ -181,5 +184,5 @@ def build_tagger(backend: str, max_speakers: int = 4) -> DiarizationBackend:
         try:
             return PyannoteSpeakerTagger(max_speakers=max_speakers)
         except Exception as e:
-            print(f"[Diarization] pyannote unavailable ({e}), falling back to pitch")
+            log.warning("pyannote unavailable (%s), falling back to pitch", e)
     return SpeakerTagger()

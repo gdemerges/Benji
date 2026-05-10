@@ -33,6 +33,8 @@ Microphone → AudioCapture → VAD (Silero ONNX) → Transcriber (Whisper) → 
 
 ## Installation
 
+Benji uses [uv](https://docs.astral.sh/uv/) for dependency and Python management. Install it once: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+
 ### macOS
 
 ```bash
@@ -41,9 +43,7 @@ cd benji
 
 brew install portaudio
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 ### Windows
@@ -52,10 +52,10 @@ pip install -r requirements.txt
 git clone https://github.com/YOUR_USERNAME/benji.git
 cd benji
 
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+uv sync
 ```
+
+`uv sync` installs Python 3.12 (per `.python-version`) and all dependencies into `.venv/` automatically. To enable real speaker diarization, run `uv sync --extra diarization`.
 
 > **Note**: On Windows, PortAudio is bundled with the `sounddevice` package -- no extra install needed.
 
@@ -64,14 +64,12 @@ The Whisper model (~500MB for `small`) and Silero VAD ONNX (~2MB) are downloaded
 ## Usage
 
 ```bash
-# macOS
-source .venv/bin/activate
-python run.py
-
-# Windows
-.venv\Scripts\activate
-python run.py
+uv run benji
+# or equivalently
+uv run python run.py
 ```
+
+Tests: `uv run pytest`.
 
 ### Keyboard Shortcuts
 

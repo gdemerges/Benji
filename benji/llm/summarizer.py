@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 MODEL_ID = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 
@@ -17,8 +20,8 @@ _MODEL_CACHE: dict = {}
 def _get_model():
     if "model" not in _MODEL_CACHE:
         from mlx_lm import load
-        print(f"[Summary] Chargement du modèle '{MODEL_ID}'...")
-        print("[Summary] (Le premier lancement télécharge le modèle, ~800MB)")
+        log.info("Chargement du modèle '%s'...", MODEL_ID)
+        log.info("(Le premier lancement télécharge le modèle, ~800MB)")
         model, tokenizer = load(MODEL_ID)
         _MODEL_CACHE["model"] = model
         _MODEL_CACHE["tokenizer"] = tokenizer
@@ -70,23 +73,23 @@ def summarize(
     Returns the full summary text once generation completes.
     """
     if not entries:
-        print("[Summary] Aucune transcription à résumer.")
+        log.info("Aucune transcription à résumer.")
         return None
 
     transcription_text = "\n".join(e["text"] for e in entries)
     if len(transcription_text.strip()) < 50:
-        print("[Summary] Transcription trop courte pour être résumée.")
+        log.info("Transcription trop courte pour être résumée.")
         return None
 
     try:
         from mlx_lm import generate, stream_generate
     except ImportError:
-        print("[Summary] mlx-lm non installé. Exécute : pip install mlx-lm")
+        log.warning("mlx-lm non installé. Exécute : uv sync")
         return None
 
     model, tokenizer = _get_model()
 
-    print("[Summary] Génération du résumé...")
+    log.info("Génération du résumé...")
     prompt = _build_prompt(tokenizer, transcription_text)
 
     if on_token is None:
@@ -102,7 +105,7 @@ def summarize(
             try:
                 on_token(piece)
             except Exception as e:
-                print(f"[Summary] on_token callback failed: {e}")
+                log.warning("on_token callback failed: %s", e)
     return "".join(chunks).strip()
 
 

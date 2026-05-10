@@ -1,0 +1,48 @@
+[project]
+name = "benji"
+version = "0.1.0"
+description = "macOS real-time transcription overlay (mic → VAD → STT → subtitles)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "Guillaume Demergès" }]
+
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.4.6",
+    "numpy~=2.3.5",
+    "PyQt6~=6.10.2",
+    "onnxruntime~=1.23.2",
+    "psutil~=7.2.2",
+    "httpx~=0.28.1",
+    "pyobjc-framework-Cocoa>=10.0 ; sys_platform == 'darwin'",
+    "pywin32>=306 ; sys_platform == 'win32'",
+    "mlx-lm~=0.26.3 ; sys_platform == 'darwin'",
+    "mlx-whisper>=0.4.0 ; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+diarization = [
+    # Real speaker diarization via pyannote embeddings + cosine clustering.
+    # Requires HF_TOKEN env var on first run to download the model.
+    "pyannote.audio>=3.1.0",
+    "torch>=2.2.0",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+benji = "benji.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["benji"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = ["ignore::DeprecationWarning"]

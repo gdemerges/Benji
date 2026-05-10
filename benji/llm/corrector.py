@@ -7,7 +7,10 @@ so keep the model small (~1B params) to stay under ~500ms per segment.
 
 from __future__ import annotations
 
+import logging
 import threading
+
+log = logging.getLogger(__name__)
 
 MODEL_ID = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 
@@ -28,12 +31,12 @@ def _ensure_loaded() -> bool:
             return True
         try:
             from mlx_lm import load
-            print(f"[Corrector] Loading {MODEL_ID}...")
+            log.info("Loading %s...", MODEL_ID)
             _model, _tokenizer = load(MODEL_ID)
-            print("[Corrector] Ready")
+            log.info("Ready")
             return True
         except Exception as e:
-            print(f"[Corrector] Disabled ({e})")
+            log.warning("Disabled (%s)", e)
             _load_failed = True
             return False
 
@@ -69,5 +72,5 @@ def correct(text: str, language: str | None = "fr") -> str:
             return text
         return corrected
     except Exception as e:
-        print(f"[Corrector] Skipped: {e}")
+        log.warning("Skipped: %s", e)
         return text

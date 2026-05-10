@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 
@@ -6,6 +7,8 @@ import sounddevice as sd
 from queue import Queue
 
 from benji.config import AudioConfig
+
+log = logging.getLogger(__name__)
 
 
 class AudioCapture:
@@ -22,7 +25,7 @@ class AudioCapture:
     def _callback(self, indata: np.ndarray, frames: int, time_info, status):
         if status:
             # Non-fatal (overflow, underflow); log at most
-            print(f"[AudioCapture] {status}")
+            log.warning("%s", status)
         self.audio_queue.put(indata[:, 0].copy())
 
     def _open_stream(self) -> bool:
@@ -39,10 +42,10 @@ class AudioCapture:
                 self.stream = stream
             device_info = sd.query_devices(kind="input")
             name = device_info.get("name", "?") if isinstance(device_info, dict) else "?"
-            print(f"[AudioCapture] Recording at {self.config.sample_rate}Hz on '{name}'")
+            log.info("Recording at %dHz on '%s'", self.config.sample_rate, name)
             return True
         except Exception as e:
-            print(f"[AudioCapture] Failed to open stream: {e}")
+            log.error("Failed to open stream: %s", e)
             return False
 
     def _close_stream(self):
@@ -63,7 +66,7 @@ class AudioCapture:
                 active = self.stream is not None and self.stream.active
             if active:
                 continue
-            print("[AudioCapture] Device lost — attempting reconnect...")
+            log.warning("Device lost — attempting reconnect...")
             self._close_stream()
             # Let sounddevice refresh its device list
             try:
@@ -90,4 +93,4 @@ class AudioCapture:
     def stop(self):
         self._stop.set()
         self._close_stream()
-        print("[AudioCapture] Stopped")
+        log.info("Stopped")

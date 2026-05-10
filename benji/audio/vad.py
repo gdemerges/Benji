@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 from collections import deque
 
@@ -7,6 +8,8 @@ import onnxruntime as ort
 from queue import Queue, Full
 
 from benji.config import AudioConfig, VADConfig
+
+log = logging.getLogger(__name__)
 
 SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 SILERO_ONNX_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
@@ -63,12 +66,12 @@ def _download_model() -> str:
 
     if os.path.exists(model_path):
         if not _verify_sha256(model_path, SILERO_ONNX_SHA256):
-            print("[VAD] Cached model failed integrity check, re-downloading...")
+            log.warning("Cached model failed integrity check, re-downloading...")
             os.remove(model_path)
         else:
             return model_path
 
-    print("[VAD] Downloading Silero VAD ONNX model...")
+    log.info("Downloading Silero VAD ONNX model...")
     import httpx
     from urllib.parse import urlparse
 
@@ -117,7 +120,7 @@ class VADProcessor:
         # Load Silero VAD (ONNX)
         model_path = _download_model()
         self.model = SileroVADOnnx(model_path)
-        print("[VAD] Silero VAD loaded (ONNX)")
+        log.info("Silero VAD loaded (ONNX)")
 
         # State
         self.is_speaking = False
@@ -164,7 +167,7 @@ class VADProcessor:
                 self.is_speaking = True
                 self.speech_buffer = list(self.pre_speech_buffer)
                 self.samples_since_partial = 0
-                print("[VAD] Speech started")
+                log.debug("Speech started")
                 if self.display_queue:
                     self.display_queue.put({"type": "vad_status", "speaking": True})
             self.speech_buffer.append(chunk)
@@ -224,7 +227,7 @@ class VADProcessor:
 
         if len(audio) >= min_samples:
             duration = len(audio) / self.sample_rate
-            print(f"[VAD] Speech segment: {duration:.1f}s (final={is_final})")
+            log.debug("Speech segment: %.1fs (final=%s)", duration, is_final)
             # Finals must not be dropped; block briefly if transcriber is busy
             self.transcribe_queue.put({"audio": audio, "is_final": is_final})
 
@@ -239,10 +242,10 @@ class VADProcessor:
             self.display_queue.put({"type": "vad_status", "speaking": False})
 
     def run(self):
-        print("[VAD] Processing started")
+        log.info("Processing started")
         while True:
             chunk = self.audio_queue.get()
             if chunk is None:
                 break
             self.process_chunk(chunk)
-        print("[VAD] Processing stopped")
+        log.info("Processing stopped")

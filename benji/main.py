@@ -1,9 +1,15 @@
+import logging
 import sys
 import signal
 import threading
 import platform
 from datetime import datetime
 from queue import Queue
+
+from benji.logging_config import setup_logging
+
+setup_logging()
+log = logging.getLogger(__name__)
 
 
 def _promote_to_accessory_app():
@@ -21,7 +27,7 @@ def _promote_to_accessory_app():
             NSApplicationActivationPolicyAccessory
         )
     except Exception as e:
-        print(f"[Benji] Could not set accessory policy: {e}")
+        logging.getLogger("benji.main").warning("Could not set accessory policy: %s", e)
 
 
 _promote_to_accessory_app()
@@ -58,7 +64,7 @@ def main():
     capture = AudioCapture(audio_queue, audio_config)
     vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue)
 
-    print("[Benji] Starting...")
+    log.info("Starting...")
 
     app = QApplication(sys.argv)
     app.setApplicationName("Benji")
@@ -109,11 +115,15 @@ def main():
 
     def qt_exception_hook(exc_type, exc_value, exc_traceback):
         if not issubclass(exc_type, KeyboardInterrupt):
-            print(f"[Error] Uncaught exception: {exc_type.__name__}: {exc_value}")
+            log.error("Uncaught exception: %s: %s", exc_type.__name__, exc_value)
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     def unraisable_hook(unraisable):
-        print(f"[Error] Unraisable exception: {unraisable.exc_type.__name__}: {unraisable.exc_value}")
+        log.error(
+            "Unraisable exception: %s: %s",
+            unraisable.exc_type.__name__,
+            unraisable.exc_value,
+        )
 
     sys.excepthook = qt_exception_hook
     sys.unraisablehook = unraisable_hook
@@ -161,18 +171,18 @@ def main():
     app.aboutToQuit.connect(lambda: overlay.cleanup() if not overlay._shutting_down else None)
 
     def signal_handler(sig, frame):
-        print("\n[Benji] Interrupt received, shutting down...")
+        log.info("Interrupt received, shutting down...")
         overlay.cleanup()
         QTimer.singleShot(0, app.quit)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    print("[Benji] Ctrl+Shift+H: history · Ctrl+Shift+S: live summary")
+    log.info("Ctrl+Shift+H: history · Ctrl+Shift+S: live summary")
 
     exit_code = app.exec()
 
-    print("[Benji] Shutting down...")
+    log.info("Shutting down...")
     if live_summarizer:
         live_summarizer.stop()
     capture.stop()

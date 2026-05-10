@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import platform
 from typing import Iterator, Protocol
+
+log = logging.getLogger(__name__)
 
 
 class WhisperBackend(Protocol):
@@ -42,7 +45,7 @@ class MLXWhisperBackend:
         self._mlx = __import__("mlx_whisper")
         self.repo = _MLX_MODEL_MAP.get(model_size, f"mlx-community/whisper-{model_size}-mlx")
         self.default_beam_size = default_beam_size
-        print(f"[STT] MLX backend using '{self.repo}' (Apple Silicon GPU)")
+        log.info("MLX backend using '%s' (Apple Silicon GPU)", self.repo)
 
     def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
         result = self._mlx.transcribe(
@@ -115,9 +118,9 @@ class FasterWhisperBackend:
             model_path = download_model(model_size, local_files_only=True)
         except Exception:
             model_path = None
-            print(f"[STT] Model '{model_size}' not found locally. Downloading...")
+            log.info("Model '%s' not found locally. Downloading...", model_size)
 
-        print(f"[STT] faster-whisper '{model_size}' on {device} ({resolved_ct})")
+        log.info("faster-whisper '%s' on %s (%s)", model_size, device, resolved_ct)
         self.model = WhisperModel(
             model_path or model_size,
             device=device,
@@ -161,10 +164,10 @@ def build_backend(
         try:
             # MLX-Whisper is fp16 on Apple GPU — `compute_type` is a no-op here,
             # logged for transparency.
-            print(f"[STT] (compute_type={compute_type} ignored by MLX backend; MLX is fp16)")
+            log.debug("compute_type=%s ignored by MLX backend (MLX is fp16)", compute_type)
             return MLXWhisperBackend(model_size, default_beam_size=beam_size)
         except ImportError:
-            print("[STT] mlx-whisper not installed, falling back to faster-whisper")
+            log.warning("mlx-whisper not installed, falling back to faster-whisper")
         except Exception as e:
-            print(f"[STT] MLX backend failed ({e}), falling back to faster-whisper")
+            log.warning("MLX backend failed (%s), falling back to faster-whisper", e)
     return FasterWhisperBackend(model_size, beam_size, cpu_threads, compute_type=compute_type)

@@ -1,3 +1,4 @@
+import logging
 import time
 from collections import deque
 from queue import Queue
@@ -5,6 +6,8 @@ from queue import Queue
 import numpy as np
 
 from benji.config import STTConfig
+
+log = logging.getLogger(__name__)
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend
@@ -41,14 +44,14 @@ class Transcriber:
             else None
         )
 
-        print(f"[STT] Loading Whisper model '{self.config.model_size}'...")
+        log.info("Loading Whisper model '%s'...", self.config.model_size)
         self.backend = build_backend(
             model_size=self.config.model_size,
             beam_size=self.config.beam_size,
             cpu_threads=self.config.cpu_threads,
             compute_type=self.config.compute_type,
         )
-        print("[STT] Model loaded")
+        log.info("Model loaded")
 
     def warmup(self, seconds: float = 1.0) -> None:
         """Run a one-shot inference on silence to amortize JIT/graph compilation.
@@ -63,9 +66,9 @@ class Transcriber:
                 silence, language=self.config.language, beam_size=1, initial_prompt=None
             ):
                 pass
-            print(f"[STT] Warm-up done in {(time.monotonic() - t0) * 1000:.0f} ms")
+            log.info("Warm-up done in %.0f ms", (time.monotonic() - t0) * 1000)
         except Exception as e:
-            print(f"[STT] Warm-up skipped: {e}")
+            log.warning("Warm-up skipped: %s", e)
 
     def _initial_prompt(self) -> str | None:
         """Build initial_prompt = glossary terms + recent context words.
@@ -148,12 +151,12 @@ class Transcriber:
                 from benji.llm.corrector import correct
                 full_text = correct(full_text, language=self.config.language)
             except Exception as e:
-                print(f"[STT] LLM correction skipped: {e}")
+                log.warning("LLM correction skipped: %s", e)
 
         # Replace the streamed (raw) overlay text with the post-processed/corrected one.
         self.display_queue.put({"type": "final_text", "text": full_text})
 
-        print(f'[STT] "{full_text}"')
+        log.info('"%s"', full_text)
         self.history.add(full_text)
 
         # Update sliding context from the raw (pre-label) words
@@ -167,7 +170,7 @@ class Transcriber:
             self.stats.record_segment(audio_seconds, latency_ms)
 
     def run(self):
-        print("[STT] Transcription started (incremental streaming)")
+        log.info("Transcription started (incremental streaming)")
         while True:
             item = self.transcribe_queue.get()
             if item is None:
@@ -177,4 +180,4 @@ class Transcriber:
             if not is_final and not self.transcribe_queue.empty():
                 continue
             self._run_segment(audio, is_final)
-        print("[STT] Transcription stopped")
+        log.info("Transcription stopped")
