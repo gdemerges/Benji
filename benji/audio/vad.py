@@ -198,12 +198,17 @@ class VADProcessor:
             self._flush_segment(is_final=True)
             return
 
-        # Incremental partial during ongoing speech
-        if (
-            self.config.partial_interval_ms > 0
-            and self.samples_since_partial >= self._partial_sample_interval
-        ):
-            self._emit_partial()
+        # Incremental partial during ongoing speech. A partial re-transcribes the
+        # entire growing buffer, so a fixed interval makes total cost quadratic in
+        # segment length. Back off as the buffer grows (the final pass redoes the
+        # whole segment anyway); this keeps per-segment partial work ~linear while
+        # staying responsive early when perceived latency matters most.
+        if self.config.partial_interval_ms > 0:
+            dynamic_interval = self._partial_sample_interval + int(
+                self.config.partial_growth_factor * total_samples
+            )
+            if self.samples_since_partial >= dynamic_interval:
+                self._emit_partial()
 
     def _emit_partial(self):
         if not self.speech_buffer:

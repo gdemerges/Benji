@@ -48,6 +48,13 @@ class MLXWhisperBackend:
         log.info("MLX backend using '%s' (Apple Silicon GPU)", self.repo)
 
     def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
+        # mlx-whisper has no beam search (GreedyDecoder only — passing beam_size
+        # raises NotImplementedError). The available speed/quality lever is the
+        # temperature-fallback chain: a partial pass (beam_size<=1) decodes once
+        # at T=0 for minimum latency; a final pass keeps the fallback chain so a
+        # bad greedy decode retries at higher temperature.
+        effective_beam = beam_size or self.default_beam_size
+        temperature = (0.0,) if effective_beam <= 1 else (0.0, 0.2, 0.4)
         result = self._mlx.transcribe(
             audio,
             path_or_hf_repo=self.repo,
@@ -58,7 +65,7 @@ class MLXWhisperBackend:
             no_speech_threshold=0.6,
             logprob_threshold=-1.0,
             compression_ratio_threshold=2.4,
-            temperature=(0.0, 0.2, 0.4),
+            temperature=temperature,
             verbose=None,
         )
         for seg in result.get("segments", []):

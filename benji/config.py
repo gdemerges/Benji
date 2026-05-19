@@ -50,6 +50,12 @@ class VADConfig:
     max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
     pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
     partial_interval_ms: int = 400  # Re-transcribe partial audio every N ms (0 = disabled)
+    # Each partial re-transcribes the whole growing buffer, so a fixed interval
+    # makes total partial cost quadratic in segment length. Space partials out as
+    # the buffer grows: effective interval = partial_interval_ms + growth_factor *
+    # current_buffer_ms. The final pass re-transcribes everything anyway, so backing
+    # off on long segments costs almost no perceived quality. 0.0 = fixed interval.
+    partial_growth_factor: float = 0.5
     # Adaptive threshold: lifts speech_threshold above the noise floor in noisy rooms.
     # Effective threshold = max(speech_threshold, p95(non_speech_conf) + adaptive_margin).
     adaptive_threshold: bool = True
