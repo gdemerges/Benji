@@ -109,6 +109,7 @@ class VADProcessor:
         audio_config: AudioConfig = None,
         vad_config: VADConfig = None,
         display_queue: Queue = None,
+        stats=None,
     ):
         self.audio_queue = audio_queue
         self.transcribe_queue = transcribe_queue
@@ -116,6 +117,7 @@ class VADProcessor:
         self.audio_config = audio_config or AudioConfig()
         self.config = vad_config or VADConfig()
         self.sample_rate = self.audio_config.sample_rate
+        self.stats = stats
 
         # Load Silero VAD (ONNX)
         model_path = _download_model()
@@ -224,7 +226,8 @@ class VADProcessor:
             )
         except Full:
             # Transcriber is busy; it'll catch up on next partial or final
-            pass
+            if self.stats is not None:
+                self.stats.record_drop("partial_skipped")
 
     def _flush_segment(self, is_final: bool = True):
         audio = np.concatenate(self.speech_buffer) if self.speech_buffer else np.array([], dtype=np.float32)
@@ -233,8 +236,24 @@ class VADProcessor:
         if len(audio) >= min_samples:
             duration = len(audio) / self.sample_rate
             log.debug("Speech segment: %.1fs (final=%s)", duration, is_final)
-            # Finals must not be dropped; block briefly if transcriber is busy
-            self.transcribe_queue.put({"audio": audio, "is_final": is_final})
+            # Finals must not be dropped silently. Block briefly to let the STT
+            # catch up; if it's still saturated after the timeout, log loudly
+            # and count the drop so a stalled pipeline is visible to the user.
+            try:
+                self.transcribe_queue.put(
+                    {"audio": audio, "is_final": is_final}, timeout=2.0
+                )
+            except Full:
+                log.warning(
+                    "transcribe_queue full after 2s; dropping final segment (%.1fs). "
+                    "STT can't keep up — consider a smaller model.",
+                    duration,
+                )
+                if self.stats is not None:
+                    self.stats.record_drop("transcribe_queue_full")
+                if self.display_queue is not None:
+                    # Clear any streamed partial words from the dropped segment.
+                    self.display_queue.put({"type": "final_text", "text": "", "drop": True})
 
         self.speech_buffer = []
         self.silence_chunks = 0

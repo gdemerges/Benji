@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime
 
 
@@ -16,6 +16,17 @@ class SessionStats:
         self._final_latencies_ms: deque[float] = deque(maxlen=max_latency_samples)
         self._partial_latencies_ms: deque[float] = deque(maxlen=max_latency_samples)
         self._partial_count = 0
+        self._drops: Counter[str] = Counter()
+
+    def record_drop(self, reason: str) -> None:
+        """Count an event where audio (or a transcription) was lost.
+
+        Reasons include "transcribe_queue_full" (VAD couldn't enqueue a final
+        segment), "stt_error" (a segment crashed), "stt_thread_restart" (the
+        supervisor relaunched the STT thread).
+        """
+        with self._lock:
+            self._drops[reason] += 1
 
     def record_segment(
         self,
@@ -54,6 +65,7 @@ class SessionStats:
                 "partials": self._partial_count,
                 "partial_latency_p50_ms": pp50,
                 "partial_latency_p95_ms": pp95,
+                "drops": dict(self._drops),
             }
 
     def format_footer(self) -> str:
@@ -69,4 +81,7 @@ class SessionStats:
                 f" · partial×{s['partials']} "
                 f"p50={s['partial_latency_p50_ms']:.0f}ms p95={s['partial_latency_p95_ms']:.0f}ms"
             )
+        if s["drops"]:
+            drops_str = ", ".join(f"{k}={v}" for k, v in sorted(s["drops"].items()))
+            line += f" · drops[{drops_str}]"
         return line

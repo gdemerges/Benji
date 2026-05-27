@@ -34,7 +34,7 @@ _promote_to_accessory_app()
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QThread, QEventLoop, pyqtSignal
 
 from benji.config import AudioConfig, VADConfig, STTConfig, UIConfig
 from benji.audio.capture import AudioCapture
@@ -62,7 +62,7 @@ def main():
     display_queue = Queue(maxsize=10)
 
     capture = AudioCapture(audio_queue, audio_config)
-    vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue)
+    vad = VADProcessor(audio_queue, transcribe_queue, audio_config, vad_config, display_queue, stats=stats)
 
     log.info("Starting...")
 
@@ -76,26 +76,33 @@ def main():
     splash.show()
     app.processEvents()
 
+    class _ModelLoader(QThread):
+        loaded = pyqtSignal(object)
+        failed = pyqtSignal(object)
+        warming = pyqtSignal()
+
+        def run(self):
+            try:
+                t = Transcriber(
+                    transcribe_queue, display_queue, stt_config,
+                    stats=stats, sample_rate=audio_config.sample_rate,
+                )
+                self.warming.emit()
+                t.warmup()
+                self.loaded.emit(t)
+            except Exception as e:
+                self.failed.emit(e)
+
+    loader = _ModelLoader()
+    loop = QEventLoop()
     transcriber_holder: dict = {}
     load_error: dict = {}
-
-    def _load_model():
-        try:
-            t = Transcriber(
-                transcribe_queue, display_queue, stt_config,
-                stats=stats, sample_rate=audio_config.sample_rate,
-            )
-            splash.set_status("Préchauffage du modèle…")
-            t.warmup()
-            transcriber_holder["t"] = t
-        except Exception as e:
-            load_error["e"] = e
-
-    load_thread = threading.Thread(target=_load_model, name="ModelLoad")
-    load_thread.start()
-    while load_thread.is_alive():
-        app.processEvents()
-        load_thread.join(timeout=0.05)
+    loader.loaded.connect(lambda t: (transcriber_holder.__setitem__("t", t), loop.quit()))
+    loader.failed.connect(lambda e: (load_error.__setitem__("e", e), loop.quit()))
+    loader.warming.connect(lambda: splash.set_status("Préchauffage du modèle…"))
+    loader.start()
+    loop.exec()
+    loader.wait()
 
     if "e" in load_error:
         splash.close()
@@ -106,9 +113,31 @@ def main():
     app.processEvents()
 
     vad_thread = threading.Thread(target=vad.run, daemon=True, name="VAD")
-    stt_thread = threading.Thread(target=transcriber.run, daemon=True, name="STT")
+
+    # Supervisor: restart the STT thread if it dies. The transcriber's run loop
+    # already catches per-segment errors; this is the last-resort safety net for
+    # anything that escapes (e.g. backend crash, OOM in a tokenizer).
+    stt_thread_ref: dict = {}
+    stt_stopping = threading.Event()
+
+    def _stt_supervisor():
+        backoff = 1.0
+        while not stt_stopping.is_set():
+            t = threading.Thread(target=transcriber.run, daemon=True, name="STT")
+            stt_thread_ref["t"] = t
+            t.start()
+            t.join()
+            if stt_stopping.is_set():
+                return
+            log.error("STT thread exited unexpectedly; restarting in %.1fs", backoff)
+            if stats is not None:
+                stats.record_drop("stt_thread_restart")
+            stt_stopping.wait(timeout=backoff)
+            backoff = min(backoff * 2, 30.0)
+
+    stt_supervisor = threading.Thread(target=_stt_supervisor, daemon=True, name="STT-supervisor")
     vad_thread.start()
-    stt_thread.start()
+    stt_supervisor.start()
     capture.start()
 
     splash.close()
@@ -187,9 +216,10 @@ def main():
         live_summarizer.stop()
     capture.stop()
     audio_queue.put(None)
+    stt_stopping.set()
     transcribe_queue.put(None)
     vad_thread.join(timeout=2)
-    stt_thread.join(timeout=2)
+    stt_supervisor.join(timeout=3)
 
     sys.exit(exit_code)
 
