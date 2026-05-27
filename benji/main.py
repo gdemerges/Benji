@@ -42,6 +42,7 @@ from benji.audio.vad import VADProcessor
 from benji.stats import SessionStats
 from benji.stt.transcriber import Transcriber
 from benji.ui.overlay import SubtitleOverlay
+from benji.ui.display_bus import DisplayBus
 from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
 from benji.ui.splash import SplashWindow
@@ -157,7 +158,10 @@ def main():
     sys.excepthook = qt_exception_hook
     sys.unraisablehook = unraisable_hook
 
-    overlay = SubtitleOverlay(display_queue, ui_config)
+    bus = DisplayBus(display_queue)
+    bus.start()
+
+    overlay = SubtitleOverlay(bus, ui_config)
 
     history_window = HistoryWindow(session_start=session_start, stats=stats)
     history_window.hide()
@@ -212,6 +216,7 @@ def main():
     exit_code = app.exec()
 
     log.info("Shutting down...")
+    bus.stop()
     if live_summarizer:
         live_summarizer.stop()
     capture.stop()
