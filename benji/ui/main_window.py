@@ -126,13 +126,12 @@ class MainWindow(QMainWindow):
         entries = self._history.get_since(self._session_start)
         if not entries:
             return
-        text = "\n".join(e["text"] for e in entries)
         sid = uuid.uuid4().hex
         self._pending_summary_id = sid
         self._refresh_summarize_enabled()
         self.summaries_tab.begin_pending(sid)
         self._refresh_tab_badge()
-        self._worker.request(text=text, summary_id=sid)
+        self._worker.request(entries=entries, summary_id=sid)
 
     def _on_summary_started(self, sid: str) -> None:
         log.info("Summary started: %s", sid)

@@ -8,7 +8,7 @@ from benji.llm.summary_worker import SummaryWorker
 
 @pytest.fixture
 def fake_summarize():
-    def _summarize(text, language="fr", on_token=None):
+    def _summarize(entries, on_token=None):
         for chunk in ["Voici ", "un ", "résumé."]:
             if on_token:
                 on_token(chunk)
@@ -34,7 +34,7 @@ def test_full_lifecycle(qtbot, tmp_path, fake_summarize):
     with patch("benji.llm.summary_worker.summarize", side_effect=fake_summarize), \
          patch("benji.llm.summary_worker.save_summary", side_effect=fake_save):
         worker.start()
-        worker.request("Texte source", summary_id="abc")
+        worker.request(entries=[{"text": "Texte source"}], summary_id="abc")
         qtbot.waitUntil(lambda: len(finished) == 1, timeout=2000)
 
     assert started == ["abc"]
@@ -54,9 +54,26 @@ def test_failure_emits_failed(qtbot, fake_summarize):
 
     with patch("benji.llm.summary_worker.summarize", side_effect=bad):
         worker.start()
-        worker.request("x", summary_id="z")
+        worker.request(entries=[{"text": "x"}], summary_id="z")
         qtbot.waitUntil(lambda: len(failed) == 1, timeout=2000)
 
     assert failed[0][0] == "z"
     assert "model crashed" in failed[0][1]
+    worker.shutdown()
+
+
+def test_empty_summary_emits_failed(qtbot, tmp_path):
+    def empty_summarize(entries, on_token=None):
+        return None
+
+    failed = []
+    worker = SummaryWorker()
+    worker.failed.connect(lambda sid, err: failed.append((sid, err)))
+
+    with patch("benji.llm.summary_worker.summarize", side_effect=empty_summarize):
+        worker.start()
+        worker.request(entries=[], summary_id="empty")
+        qtbot.waitUntil(lambda: len(failed) == 1, timeout=2000)
+
+    assert failed[0][0] == "empty"
     worker.shutdown()

@@ -21,15 +21,18 @@ class SummaryWorker(QThread):
     finished = pyqtSignal(str, object)      # summary_id, Path
     failed = pyqtSignal(str, str)           # summary_id, error message
 
-    def __init__(self, language: str = "fr", parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._queue: Queue = Queue()
-        self._language = language
         self.setObjectName("SummaryWorker")
 
-    def request(self, text: str, summary_id: str) -> None:
-        """Thread-safe : enqueue une demande de résumé."""
-        self._queue.put((summary_id, text))
+    def request(self, entries: list[dict], summary_id: str) -> None:
+        """Thread-safe : enqueue une demande de résumé.
+
+        entries: liste de dicts (au format TranscriptionHistory) avec au moins
+        une clé 'text'. summarize() concatène et alimente le LLM.
+        """
+        self._queue.put((summary_id, entries))
 
     def shutdown(self) -> None:
         self._queue.put(_STOP_SENTINEL)
@@ -41,14 +44,16 @@ class SummaryWorker(QThread):
             item = self._queue.get()
             if item is _STOP_SENTINEL:
                 break
-            sid, text = item
+            sid, entries = item
             self.started.emit(sid)
             try:
                 full = summarize(
-                    text,
-                    language=self._language,
+                    entries,
                     on_token=lambda c, _sid=sid: self.chunk.emit(_sid, c),
                 )
+                if not full:
+                    self.failed.emit(sid, "Le résumé est vide (aucune transcription).")
+                    continue
                 path = save_summary(full)
                 self.finished.emit(sid, path)
             except Exception as e:

@@ -184,7 +184,7 @@ def main():
     summary_worker = None
 
     if mode == "window":
-        summary_worker = SummaryWorker(language=stt_config.language or "fr")
+        summary_worker = SummaryWorker()
         summary_worker.start()
 
         main_window = MainWindow(
