@@ -1,11 +1,16 @@
-"""Onglet 'Live' : chat-log scrollable des finals + partiel en italique."""
+"""Onglet 'Live' : chat-log scrollable + bubble partielle."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QHBoxLayout, QScrollArea, QVBoxLayout, QWidget,
+)
 
-from PyQt6.QtGui import QTextCursor
-from PyQt6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
+from benji.ui.widgets.chat_item import ChatItem
+from benji.ui.widgets.partial_bubble import PartialBubble
+
+_MAX_CONTENT_WIDTH = 720
 
 
 class LiveTab(QWidget):
@@ -14,66 +19,93 @@ class LiveTab(QWidget):
         self._partial_text: str = ""
         self._user_scrolled_up = False
         self._build_ui()
-        self.log.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
     def _build_ui(self) -> None:
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setStyleSheet("QTextEdit { font-size: 14px; }")
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
-        self.partial = QLabel("")
-        self.partial.setWordWrap(True)
-        self.partial.setStyleSheet("color: gray; font-style: italic; padding: 4px;")
+        self.viewport_widget = QWidget()
+        outer = QHBoxLayout(self.viewport_widget)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(0)
+        outer.addStretch(1)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(self.log, 1)
-        layout.addWidget(self.partial)
+        self.content = QWidget()
+        self.content.setMaximumWidth(_MAX_CONTENT_WIDTH)
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
+        self.content_layout.addStretch(1)
+        outer.addWidget(self.content, 0)
+        outer.addStretch(1)
+
+        self.scroll.setWidget(self.viewport_widget)
+
+        self.partial = PartialBubble()
+        partial_wrap = QHBoxLayout()
+        partial_wrap.setContentsMargins(20, 0, 20, 14)
+        partial_wrap.addStretch(1)
+        self.partial.setMaximumWidth(_MAX_CONTENT_WIDTH)
+        partial_wrap.addWidget(self.partial, 1)
+        partial_wrap.addStretch(1)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self.scroll, 1)
+        root.addLayout(partial_wrap)
+
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet("LiveTab, QScrollArea { background: transparent; border: none; }")
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.viewport_widget.setStyleSheet("background: transparent;")
+        self.content.setStyleSheet("background: transparent;")
+        for i in range(self.content_layout.count() - 1):
+            w = self.content_layout.itemAt(i).widget()
+            if w is not None and hasattr(w, "apply_theme"):
+                w.apply_theme()
+        self.partial.apply_theme()
 
     def on_event(self, item) -> None:
-        """Slot abonné au DisplayBus. Met à jour le chat-log et le partiel."""
         if not isinstance(item, dict):
             return
         msg_type = item.get("type")
         if msg_type == "segment_start":
             self._partial_text = ""
-            self.partial.setText("")
+            self.partial.set_text("")
         elif msg_type == "word":
             text = item.get("text", "")
             if not text:
                 return
             sep = "" if (not self._partial_text or self._partial_text.endswith(" ") or text.startswith((".", ",", "!", "?", ";", ":"))) else " "
             self._partial_text = (self._partial_text + sep + text).strip()
-            self.partial.setText(self._partial_text)
+            self.partial.set_text(self._partial_text)
         elif msg_type == "final_text":
             text = item.get("text", "")
             drop = item.get("drop", False)
             if drop or not text:
                 self._partial_text = ""
-                self.partial.setText("")
+                self.partial.set_text("")
                 return
             self._append_final(text)
             self._partial_text = ""
-            self.partial.setText("")
+            self.partial.set_text("")
 
     def _append_final(self, text: str) -> None:
-        ts = datetime.now().strftime("%H:%M")
-        html = f'<div style="margin-bottom:6px"><span style="color:#888">{ts}</span>&nbsp;&nbsp;{self._escape(text)}</div>'
-        cursor = self.log.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertHtml(html)
+        item = ChatItem(text)
+        self.content_layout.insertWidget(self.content_layout.count() - 1, item)
         if not self._user_scrolled_up:
-            self._scroll_to_bottom()
-
-    @staticmethod
-    def _escape(text: str) -> str:
-        return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+            QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _scroll_to_bottom(self) -> None:
-        sb = self.log.verticalScrollBar()
+        sb = self.scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     def _on_scroll(self, value: int) -> None:
-        sb = self.log.verticalScrollBar()
-        # Si on est à moins de 20 px du bas, on considère "collé en bas"
+        sb = self.scroll.verticalScrollBar()
         self._user_scrolled_up = (sb.maximum() - value) > 20
