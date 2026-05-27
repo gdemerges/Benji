@@ -18,11 +18,20 @@ def _make_icon() -> QIcon:
     return QIcon(pix)
 
 
-def build_tray(history_window, live_summary_window) -> QSystemTrayIcon:
+def build_tray(history_window, live_summary_window, main_window=None) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(_make_icon())
     tray.setToolTip("Benji — live subtitles")
 
     menu = QMenu()
+
+    if main_window is not None:
+        def _show_main():
+            main_window.show()
+            main_window.raise_()
+            main_window.activateWindow()
+        show_main = QAction("Afficher fenêtre", menu)
+        show_main.triggered.connect(_show_main)
+        menu.addAction(show_main)
 
     show_history = QAction("Afficher l'historique", menu)
     show_history.triggered.connect(history_window.show)

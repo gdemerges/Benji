@@ -47,6 +47,10 @@ from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
 from benji.ui.splash import SplashWindow
 from benji.ui.tray import build_tray
+from benji.launch_mode import launch_mode
+from benji.ui.window_controller import WindowController
+from benji.ui.main_window import MainWindow
+from benji.llm.summary_worker import SummaryWorker
 
 
 def main():
@@ -169,8 +173,37 @@ def main():
     live_summary_window = LiveSummaryWindow()
     live_summary_window.hide()
 
+    # Mode de lancement : CLI overlay-seul vs .app fenêtre principale
+    mode = launch_mode()
+    log.info("Launch mode: %s", mode)
+
+    main_window = None
+    controller = None
+    summary_worker = None
+
+    if mode == "window":
+        summary_worker = SummaryWorker(language=stt_config.language or "fr")
+        summary_worker.start()
+
+        main_window = MainWindow(
+            bus=bus,
+            history=transcriber.history,
+            session_start=session_start,
+            summary_worker=summary_worker,
+            on_minimize=lambda: controller.show_overlay() if controller else None,
+        )
+
+        controller = WindowController(
+            main_window=main_window,
+            overlay=overlay,
+            initial_mode="window",
+        )
+
+        # Click sur overlay → revient à la fenêtre
+        overlay._on_click = lambda: controller.show_window()
+
     # Menu-bar tray icon (Quit / Show history / Show summary)
-    tray = build_tray(history_window, live_summary_window)  # noqa: F841 (keep ref)
+    tray = build_tray(history_window, live_summary_window, main_window=main_window)  # noqa: F841 (keep ref)
 
     # Optional: rolling live summary
     live_summarizer = None
@@ -216,6 +249,8 @@ def main():
     exit_code = app.exec()
 
     log.info("Shutting down...")
+    if summary_worker is not None:
+        summary_worker.shutdown()
     bus.stop()
     if live_summarizer:
         live_summarizer.stop()
