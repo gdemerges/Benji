@@ -1,0 +1,62 @@
+"""QThread async qui exécute summarize() + save_summary() sans bloquer l'UI."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from queue import Queue
+
+from PyQt6.QtCore import QThread, pyqtSignal
+
+from benji.llm.summarizer import save_summary, summarize
+
+log = logging.getLogger(__name__)
+
+_STOP_SENTINEL = object()
+
+
+class SummaryWorker(QThread):
+    started = pyqtSignal(str)               # summary_id
+    chunk = pyqtSignal(str, str)            # summary_id, token chunk
+    finished = pyqtSignal(str, object)      # summary_id, Path
+    failed = pyqtSignal(str, str)           # summary_id, error message
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._queue: Queue = Queue()
+        self.setObjectName("SummaryWorker")
+
+    def request(self, entries: list[dict], summary_id: str) -> None:
+        """Thread-safe : enqueue une demande de résumé.
+
+        entries: liste de dicts (au format TranscriptionHistory) avec au moins
+        une clé 'text'. summarize() concatène et alimente le LLM.
+        """
+        self._queue.put((summary_id, entries))
+
+    def shutdown(self) -> None:
+        self._queue.put(_STOP_SENTINEL)
+        self.wait(5000)
+
+    def run(self) -> None:
+        log.info("SummaryWorker started")
+        while True:
+            item = self._queue.get()
+            if item is _STOP_SENTINEL:
+                break
+            sid, entries = item
+            self.started.emit(sid)
+            try:
+                full = summarize(
+                    entries,
+                    on_token=lambda c, _sid=sid: self.chunk.emit(_sid, c),
+                )
+                if not full:
+                    self.failed.emit(sid, "Le résumé est vide (aucune transcription).")
+                    continue
+                path = save_summary(full)
+                self.finished.emit(sid, path)
+            except Exception as e:
+                log.exception("Summary failed for %s", sid)
+                self.failed.emit(sid, str(e))
+        log.info("SummaryWorker stopped")
