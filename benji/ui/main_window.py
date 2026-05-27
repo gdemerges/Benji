@@ -125,17 +125,11 @@ class MainWindow(QMainWindow):
         self._refresh_summarize_enabled()
 
     def _apply_theme(self) -> None:
-        if platform.system() == "Darwin":
-            self.setStyleSheet("""
-                QMainWindow { background: transparent; }
-                QToolBar { background: transparent; border: none; padding: 8px 12px; spacing: 8px; }
-            """)
-        else:
-            bg = current_theme().window_background
-            self.setStyleSheet(f"""
-                QMainWindow {{ background-color: rgb({bg.red()},{bg.green()},{bg.blue()}); }}
-                QToolBar {{ background: transparent; border: none; padding: 8px 12px; spacing: 8px; }}
-            """)
+        bg = current_theme().window_background
+        self.setStyleSheet(f"""
+            QMainWindow {{ background-color: rgb({bg.red()},{bg.green()},{bg.blue()}); }}
+            QToolBar {{ background: transparent; border: none; padding: 8px 12px; spacing: 8px; }}
+        """)
         self.status_pill.apply_theme()
         self.segmented.apply_theme()
         self._apply_toolbar_button_styles()

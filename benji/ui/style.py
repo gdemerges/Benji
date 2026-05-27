@@ -84,33 +84,11 @@ FONT_MONO = '"SF Mono", Menlo, monospace'
 
 
 def apply_window_vibrancy(window: QWidget) -> None:
-    """macOS : NSVisualEffectView material underWindowBackground. No-op ailleurs."""
-    if platform.system() != "Darwin":
-        return
-    try:
-        from AppKit import (
-            NSColor,
-            NSVisualEffectView,
-            NSVisualEffectMaterialUnderWindowBackground,
-            NSVisualEffectBlendingModeBehindWindow,
-            NSVisualEffectStateActive,
-        )
-        import objc
+    """macOS vibrancy via NSVisualEffectView en remplaçant la contentView.
 
-        view_ptr = int(window.winId())
-        ns_view = objc.objc_object(c_void_p=view_ptr)
-        ns_window = ns_view.window()
-        content = ns_window.contentView()
-
-        effect = NSVisualEffectView.alloc().initWithFrame_(content.bounds())
-        effect.setAutoresizingMask_(18)  # width-sizable | height-sizable
-        effect.setMaterial_(NSVisualEffectMaterialUnderWindowBackground)
-        effect.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-        effect.setState_(NSVisualEffectStateActive)
-        content.addSubview_positioned_relativeTo_(effect, -1, None)  # below all
-
-        ns_window.setOpaque_(False)
-        ns_window.setBackgroundColor_(NSColor.clearColor())
-        log.info("macOS vibrancy applied")
-    except Exception as e:
-        log.warning("vibrancy failed: %s", e)
+    Le pattern naïf (addSubview sur la contentView Qt) casse le rendu Qt.
+    On utilise donc le pattern "wrap" : on remplace la contentView de la NSWindow
+    par un NSVisualEffectView, et on rattache l'ancienne (Qt) comme subview.
+    Désactivé pour l'instant — laisse le fallback flat tant qu'on n'a pas
+    validé le swap sur toutes les versions de Qt."""
+    return  # no-op : fallback flat (cf. _apply_theme côté MainWindow)
