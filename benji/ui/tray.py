@@ -18,19 +18,19 @@ def _make_icon() -> QIcon:
     return QIcon(pix)
 
 
-def build_tray(history_window, live_summary_window, main_window=None) -> QSystemTrayIcon:
+def build_tray(history_window, live_summary_window, show_main_window=None) -> QSystemTrayIcon:
+    """show_main_window: callable() — when present, adds an 'Afficher fenêtre' item
+    that invokes this callback. The caller is expected to route through the
+    WindowController so overlay/window mutual exclusion is preserved.
+    """
     tray = QSystemTrayIcon(_make_icon())
     tray.setToolTip("Benji — live subtitles")
 
     menu = QMenu()
 
-    if main_window is not None:
-        def _show_main():
-            main_window.show()
-            main_window.raise_()
-            main_window.activateWindow()
+    if show_main_window is not None:
         show_main = QAction("Afficher fenêtre", menu)
-        show_main.triggered.connect(_show_main)
+        show_main.triggered.connect(show_main_window)
         menu.addAction(show_main)
 
     show_history = QAction("Afficher l'historique", menu)

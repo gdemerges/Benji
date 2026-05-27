@@ -37,11 +37,16 @@ class SubtitleOverlay(QWidget):
     new_word_signal = pyqtSignal(dict)
     vad_status_signal = pyqtSignal(bool)
 
-    def __init__(self, bus, config: UIConfig = None, on_click=None):
-        """bus: DisplayBus. on_click: callable() appelé sur mousePressEvent (mode .app)."""
+    def __init__(self, bus, config: UIConfig = None, on_click=None, interactive: bool = False):
+        """bus: DisplayBus. on_click: callable() appelé sur mousePressEvent (mode .app).
+        interactive: if True, the overlay accepts mouse clicks (needed when on_click
+        is bound to bring back the main window). Default False = click-through.
+        """
         super().__init__()
         self._bus = bus
         self._on_click = on_click
+        self._interactive = interactive
+        self.setWindowTitle("BenjiOverlay")
         self.config = config or UIConfig()
         self.current_text = []  # For streaming mode
         self._shutting_down = False  # Flag to prevent operations during shutdown
@@ -198,7 +203,14 @@ class SubtitleOverlay(QWidget):
 
             window_debug = []
             for ns_window in NSApp.windows():
-                ns_window.setIgnoresMouseEvents_(True)
+                # Only style the overlay's own NSWindow — otherwise we'd float the
+                # main app window above everything too, and break its mouse events.
+                if ns_window.title() != "BenjiOverlay":
+                    continue
+                if not self._interactive:
+                    ns_window.setIgnoresMouseEvents_(True)
+                else:
+                    ns_window.setIgnoresMouseEvents_(False)
                 ns_window.setLevel_(max_level)
                 ns_window.setCollectionBehavior_(
                     (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)

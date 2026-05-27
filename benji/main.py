@@ -165,7 +165,9 @@ def main():
     bus = DisplayBus(display_queue)
     bus.start()
 
-    overlay = SubtitleOverlay(bus, ui_config)
+    # Mode de lancement détecté ici pour configurer l'overlay en interactif si .app
+    _mode = launch_mode()
+    overlay = SubtitleOverlay(bus, ui_config, interactive=(_mode == "window"))
 
     history_window = HistoryWindow(session_start=session_start, stats=stats)
     history_window.hide()
@@ -174,7 +176,7 @@ def main():
     live_summary_window.hide()
 
     # Mode de lancement : CLI overlay-seul vs .app fenêtre principale
-    mode = launch_mode()
+    mode = _mode
     log.info("Launch mode: %s", mode)
 
     main_window = None
@@ -202,8 +204,9 @@ def main():
         # Click sur overlay → revient à la fenêtre
         overlay._on_click = lambda: controller.show_window()
 
-    # Menu-bar tray icon (Quit / Show history / Show summary)
-    tray = build_tray(history_window, live_summary_window, main_window=main_window)  # noqa: F841 (keep ref)
+    # Menu-bar tray icon (Quit / Show history / Show summary / Show window in .app mode)
+    _show_main_cb = (lambda: controller.show_window()) if controller is not None else None
+    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb)  # noqa: F841 (keep ref)
 
     # Optional: rolling live summary
     live_summarizer = None
