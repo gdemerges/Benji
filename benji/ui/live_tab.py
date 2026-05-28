@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QScrollArea, QVBoxLayout, QWidget,
+    QHBoxLayout,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
 from benji.ui.widgets.chat_item import ChatItem

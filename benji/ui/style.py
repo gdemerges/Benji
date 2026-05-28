@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-import platform
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication, QPalette

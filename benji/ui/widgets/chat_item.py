@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QPropertyAnimation
+from PyQt6.QtCore import QPropertyAnimation, Qt
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QWidget
 
-from benji.ui.style import current_theme, FONT_UI, FONT_MONO
+from benji.ui.style import FONT_MONO, FONT_UI, current_theme
 
 
 class ChatItem(QWidget):

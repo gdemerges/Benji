@@ -5,12 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty,
+    QEasingCurve,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    pyqtProperty,
 )
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from benji.ui.style import current_theme, FONT_UI, FONT_MONO
+from benji.ui.style import FONT_MONO, FONT_UI, current_theme
 
 
 class _PulseDot(QWidget):

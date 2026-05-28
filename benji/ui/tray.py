@@ -1,8 +1,8 @@
 """Menu-bar tray icon with Quit / Show History actions."""
 
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
+from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 def _make_icon() -> QIcon:

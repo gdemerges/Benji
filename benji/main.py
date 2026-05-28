@@ -1,9 +1,8 @@
 import logging
-import sys
-import signal
-import threading
 import platform
-from datetime import datetime
+import signal
+import sys
+import threading
 from queue import Queue
 
 from benji.logging_config import setup_logging
@@ -32,25 +31,25 @@ def _promote_to_accessory_app():
 
 _promote_to_accessory_app()
 
+from PyQt6.QtCore import QEventLoop, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtCore import QTimer, QThread, QEventLoop, pyqtSignal
 
-from benji.config import AudioConfig, VADConfig, STTConfig, UIConfig
 from benji.audio.capture import AudioCapture
 from benji.audio.vad import VADProcessor
+from benji.config import AudioConfig, STTConfig, UIConfig, VADConfig
+from benji.launch_mode import launch_mode
+from benji.llm.summary_worker import SummaryWorker
 from benji.stats import SessionStats
 from benji.stt.transcriber import Transcriber
-from benji.ui.overlay import SubtitleOverlay
 from benji.ui.display_bus import DisplayBus
 from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
+from benji.ui.main_window import MainWindow
+from benji.ui.overlay import SubtitleOverlay
 from benji.ui.splash import SplashWindow
 from benji.ui.tray import build_tray
-from benji.launch_mode import launch_mode
 from benji.ui.window_controller import WindowController
-from benji.ui.main_window import MainWindow
-from benji.llm.summary_worker import SummaryWorker
 
 
 def main():

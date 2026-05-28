@@ -1,10 +1,10 @@
 import logging
 import threading
 import time
+from queue import Queue
 
 import numpy as np
 import sounddevice as sd
-from queue import Queue
 
 from benji.config import AudioConfig
 

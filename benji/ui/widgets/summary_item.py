@@ -7,7 +7,7 @@ from datetime import datetime
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from benji.ui.style import current_theme, FONT_UI, FONT_MONO
+from benji.ui.style import FONT_MONO, FONT_UI, current_theme
 
 
 class SummaryItem(QWidget):

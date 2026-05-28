@@ -14,7 +14,6 @@ import logging
 import os
 import sys
 
-
 _TAG_BY_MODULE = {
     "benji.main": "Benji",
     "benji.audio.capture": "Audio",

@@ -25,6 +25,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "ruff>=0.14",
 ]
 
 [project.optional-dependencies]
@@ -49,3 +50,14 @@ packages = ["benji"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+# No mypy / type stubs (project rule) — ruff is the only static gate.
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Conservative, high-signal set: pyflakes (F), import sorting (I),
+# pycodestyle warnings (W), and pyupgrade (UP). Line length (E501) is left
+# off on purpose — several lines are intentionally long. Ratchet up later.
+select = ["F", "I", "W", "UP"]

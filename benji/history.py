@@ -26,7 +26,7 @@ class TranscriptionHistory:
         """Keep only the last max_entries."""
         if not self.history_file.exists():
             return
-        with open(self.history_file, "r", encoding="utf-8") as f:
+        with open(self.history_file, encoding="utf-8") as f:
             lines = f.readlines()
         if len(lines) > self.max_entries:
             with open(self.history_file, "w", encoding="utf-8") as f:
@@ -36,7 +36,7 @@ class TranscriptionHistory:
         """Get the n most recent transcriptions."""
         if not self.history_file.exists():
             return []
-        with open(self.history_file, "r", encoding="utf-8") as f:
+        with open(self.history_file, encoding="utf-8") as f:
             lines = f.readlines()
         entries = []
         for line in lines[-n:]:
@@ -51,7 +51,7 @@ class TranscriptionHistory:
         if not self.history_file.exists():
             return []
         entries = []
-        with open(self.history_file, "r", encoding="utf-8") as f:
+        with open(self.history_file, encoding="utf-8") as f:
             for line in f:
                 try:
                     entry = json.loads(line)

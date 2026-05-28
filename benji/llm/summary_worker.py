@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from queue import Queue
 
 from PyQt6.QtCore import QThread, pyqtSignal

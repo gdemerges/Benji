@@ -1,16 +1,16 @@
 import threading
 from datetime import datetime
 
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QTextEdit,
-    QPushButton,
     QHBoxLayout,
     QLabel,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
 
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
@@ -79,7 +79,7 @@ class HistoryWindow(QWidget):
         threading.Thread(target=self._run_summarize, daemon=True).start()
 
     def _run_summarize(self):
-        from benji.llm.summarizer import summarize, save_summary
+        from benji.llm.summarizer import save_summary, summarize
         entries = self.history.get_since(self.session_start)
         if not entries:
             self._summary_error.emit("Aucune transcription dans cette session.")

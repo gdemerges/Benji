@@ -1,4 +1,3 @@
-import pytest
 
 from benji.ui.window_controller import WindowController
 

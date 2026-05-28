@@ -5,17 +5,24 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QFileSystemWatcher, QSize
+from PyQt6.QtCore import QFileSystemWatcher, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
-    QSplitter, QTextBrowser, QVBoxLayout, QWidget,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSplitter,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
 )
 
-from benji.ui.style import current_theme, FONT_UI, FONT_MONO, FONT_DISPLAY
+from benji.ui.style import FONT_DISPLAY, FONT_MONO, FONT_UI, current_theme
 from benji.ui.widgets.icons import clipboard_icon, folder_arrow_icon
 from benji.ui.widgets.pending_item import PendingItem
 from benji.ui.widgets.summary_item import SummaryItem

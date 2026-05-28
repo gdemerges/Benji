@@ -2,10 +2,10 @@ import hashlib
 import logging
 import os
 from collections import deque
+from queue import Full, Queue
 
 import numpy as np
 import onnxruntime as ort
-from queue import Queue, Full
 
 from benji.config import AudioConfig, VADConfig
 
@@ -72,8 +72,9 @@ def _download_model() -> str:
             return model_path
 
     log.info("Downloading Silero VAD ONNX model...")
-    import httpx
     from urllib.parse import urlparse
+
+    import httpx
 
     def _check_host(url: str) -> None:
         host = urlparse(url).hostname or ""

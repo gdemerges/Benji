@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from benji.ui.style import current_theme, FONT_UI
+from benji.ui.style import FONT_UI, current_theme
 
 
 class PartialBubble(QWidget):

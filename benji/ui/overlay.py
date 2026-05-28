@@ -1,11 +1,17 @@
 import logging
-import platform
 
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QFont, QPainter, QColor
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    pyqtSignal,
+    pyqtSlot,
+)
+from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from benji.config import UIConfig, IS_MACOS, IS_WINDOWS
+from benji.config import IS_MACOS, IS_WINDOWS, UIConfig
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +130,7 @@ class SubtitleOverlay(QWidget):
             return
         try:
             self.vad_indicator.set_speaking(speaking)
-        except Exception as e:
+        except Exception:
             if not self._shutting_down:
                 log.exception("Error in _update_vad_status")
 
@@ -169,9 +175,10 @@ class SubtitleOverlay(QWidget):
         reset it to Regular on certain events.
         """
         try:
-            from AppKit import NSApp, NSApplicationActivationPolicyAccessory
             import ctypes
             import ctypes.util
+
+            from AppKit import NSApp, NSApplicationActivationPolicyAccessory
 
             # Re-force Accessory policy (Qt may reset to Regular)
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -253,7 +260,6 @@ class SubtitleOverlay(QWidget):
             from AppKit import (
                 NSApp,
                 NSApplicationActivationPolicyAccessory,
-                NSWorkspace,
             )
 
             # Make the process an "accessory" app: no dock icon, behaves like
@@ -266,8 +272,6 @@ class SubtitleOverlay(QWidget):
             # Re-assert settings when the active Space changes (entering/leaving
             # another app's fullscreen). macOS resets window level on Space change.
             try:
-                nc = NSWorkspace.sharedWorkspace().notificationCenter()
-
                 class _SpaceObserver:
                     def __init__(self, cb):
                         self.cb = cb
@@ -298,8 +302,8 @@ class SubtitleOverlay(QWidget):
 
     def _click_through_windows(self):
         try:
-            import win32gui
             import win32con
+            import win32gui
             hwnd = int(self.winId())
             # Add layered + transparent + tool window extended styles
             ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
@@ -333,7 +337,7 @@ class SubtitleOverlay(QWidget):
             self.label.setText(text)
             self._reposition()
             self.hide_timer.start(self.config.display_duration_ms)
-        except Exception as e:
+        except Exception:
             if not self._shutting_down:
                 log.exception("Error in _update_text")
 
@@ -376,7 +380,7 @@ class SubtitleOverlay(QWidget):
                 self.fade_anim.stop()
                 self.setWindowOpacity(1.0)
                 self.hide_timer.start(self.config.display_duration_ms)
-        except Exception as e:
+        except Exception:
             if not self._shutting_down:
                 log.exception("Error in _update_word")
 
@@ -412,7 +416,7 @@ class SubtitleOverlay(QWidget):
             self.fade_anim.setStartValue(1.0)
             self.fade_anim.setEndValue(0.0)
             self.fade_anim.start()
-        except Exception as e:
+        except Exception:
             if not self._shutting_down:
                 log.exception("Error in _start_fade")
 

@@ -1,7 +1,8 @@
 import os
 import platform
-import psutil
 from dataclasses import dataclass, field
+
+import psutil
 
 IS_MACOS = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"

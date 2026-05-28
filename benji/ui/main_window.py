@@ -10,16 +10,24 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QPushButton, QSizePolicy, QStackedWidget,
-    QToolBar, QVBoxLayout, QWidget,
+    QHBoxLayout,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from benji.ui.live_tab import LiveTab
-from benji.ui.summaries_tab import SummariesTab
 from benji.ui.style import (
-    apply_window_vibrancy, current_theme, install_theme_listener,
     FONT_UI,
+    apply_window_vibrancy,
+    current_theme,
+    install_theme_listener,
 )
+from benji.ui.summaries_tab import SummariesTab
 from benji.ui.widgets.icons import doc_text_icon, minimize_icon
 from benji.ui.widgets.segmented_control import SegmentedControl
 from benji.ui.widgets.status_pill import StatusPill
