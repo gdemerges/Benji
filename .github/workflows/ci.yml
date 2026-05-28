@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    # Apple Silicon runner — matches the project's target (Python 3.12, mlx).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Run tests
+        # Qt tests need a headless platform plugin (no display on CI).
+        # The suite mocks the Silero VAD and never loads a real Whisper model,
+        # so no model downloads happen here.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest -q
