@@ -28,27 +28,48 @@ def _get_model():
     return _MODEL_CACHE["model"], _MODEL_CACHE["tokenizer"]
 
 
+# Source unique de vérité du prompt, partagée par le provider local (mlx-lm) et
+# le provider cloud (Claude) — voir benji/llm/providers.py.
+SYSTEM_PROMPT = (
+    "Tu es un assistant qui résume des conversations. "
+    "Réponds uniquement en français, de façon concise et structurée."
+)
+
+
+def build_user_prompt(transcription_text: str) -> str:
+    return (
+        "Voici la transcription d'une conversation. "
+        "Génère un résumé structuré avec :\n"
+        "- **Sujets abordés** : les thèmes principaux\n"
+        "- **Points clés** : les informations importantes\n"
+        "- **Décisions / Actions** : les décisions prises ou actions à faire (si applicable)\n\n"
+        "Sois factuel et concis. "
+        "Si la transcription est trop courte pour être résumée, dis-le simplement.\n\n"
+        "Transcription :\n<transcription>\n"
+        f"{transcription_text}"
+        "\n</transcription>"
+    )
+
+
+def prepare_transcription(entries: list[dict]) -> str | None:
+    """Concatène les utterances et écarte les sessions trop courtes.
+
+    Retourne le texte prêt à résumer, ou None si rien d'exploitable.
+    """
+    if not entries:
+        log.info("Aucune transcription à résumer.")
+        return None
+    transcription_text = "\n".join(e["text"] for e in entries)
+    if len(transcription_text.strip()) < 50:
+        log.info("Transcription trop courte pour être résumée.")
+        return None
+    return transcription_text
+
+
 def _build_prompt(tokenizer, transcription_text: str) -> str:
     messages = [
-        {
-            "role": "system",
-            "content": "Tu es un assistant qui résume des conversations. Réponds uniquement en français, de façon concise et structurée.",
-        },
-        {
-            "role": "user",
-            "content": (
-                "Voici la transcription d'une conversation. "
-                "Génère un résumé structuré avec :\n"
-                "- **Sujets abordés** : les thèmes principaux\n"
-                "- **Points clés** : les informations importantes\n"
-                "- **Décisions / Actions** : les décisions prises ou actions à faire (si applicable)\n\n"
-                "Sois factuel et concis. "
-                "Si la transcription est trop courte pour être résumée, dis-le simplement.\n\n"
-                "Transcription :\n<transcription>\n"
-                f"{transcription_text}"
-                "\n</transcription>"
-            ),
-        },
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": build_user_prompt(transcription_text)},
     ]
 
     if hasattr(tokenizer, "apply_chat_template"):
@@ -72,13 +93,8 @@ def summarize(
     `mlx_lm.stream_generate` and calls the callback for each chunk.
     Returns the full summary text once generation completes.
     """
-    if not entries:
-        log.info("Aucune transcription à résumer.")
-        return None
-
-    transcription_text = "\n".join(e["text"] for e in entries)
-    if len(transcription_text.strip()) < 50:
-        log.info("Transcription trop courte pour être résumée.")
+    transcription_text = prepare_transcription(entries)
+    if transcription_text is None:
         return None
 
     try:

@@ -7,7 +7,8 @@ from queue import Queue
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from benji.llm.summarizer import save_summary, summarize
+from benji.llm.providers import LocalSummaryProvider, SummaryProvider
+from benji.llm.summarizer import save_summary
 
 log = logging.getLogger(__name__)
 
@@ -20,8 +21,9 @@ class SummaryWorker(QThread):
     finished = pyqtSignal(str, object)      # summary_id, Path
     failed = pyqtSignal(str, str)           # summary_id, error message
 
-    def __init__(self, parent=None):
+    def __init__(self, provider: SummaryProvider | None = None, parent=None):
         super().__init__(parent)
+        self._provider: SummaryProvider = provider or LocalSummaryProvider()
         self._queue: Queue = Queue()
         self.setObjectName("SummaryWorker")
 
@@ -46,7 +48,7 @@ class SummaryWorker(QThread):
             sid, entries = item
             self.started.emit(sid)
             try:
-                full = summarize(
+                full = self._provider.summarize(
                     entries,
                     on_token=lambda c, _sid=sid: self.chunk.emit(_sid, c),
                 )

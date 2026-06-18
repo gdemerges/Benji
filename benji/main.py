@@ -37,8 +37,9 @@ from PyQt6.QtWidgets import QApplication
 
 from benji.audio.capture import AudioCapture
 from benji.audio.vad import VADProcessor
-from benji.config import AudioConfig, STTConfig, UIConfig, VADConfig
+from benji.config import AudioConfig, LLMConfig, STTConfig, UIConfig, VADConfig
 from benji.launch_mode import launch_mode
+from benji.llm.providers import build_summary_provider
 from benji.llm.summary_worker import SummaryWorker
 from benji.stats import SessionStats
 from benji.stt.transcriber import Transcriber
@@ -57,6 +58,7 @@ def main():
     vad_config = VADConfig()
     stt_config = STTConfig()
     ui_config = UIConfig()
+    llm_config = LLMConfig()
 
     stats = SessionStats()
     session_start = stats.session_start
@@ -183,7 +185,7 @@ def main():
     summary_worker = None
 
     if mode == "window":
-        summary_worker = SummaryWorker()
+        summary_worker = SummaryWorker(provider=build_summary_provider(llm_config))
         summary_worker.start()
 
         main_window = MainWindow(

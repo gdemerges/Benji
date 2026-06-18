@@ -35,6 +35,11 @@ diarization = [
     "pyannote.audio>=3.1.0",
     "torch>=2.2.0",
 ]
+cloud = [
+    # Résumé via l'API Claude (LLMConfig.summary_provider = "cloud").
+    # Clé via la variable d'environnement ANTHROPIC_API_KEY.
+    "anthropic>=0.40.0",
+]
 
 [project.scripts]
 benji = "benji.main:main"

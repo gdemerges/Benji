@@ -73,10 +73,10 @@ class STTConfig:
     context_words: int = 6  # Sliding context injected as initial_prompt
     cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))
     compute_type: str = "auto"
-    diarization: bool = False  # Enable speaker labeling
+    diarization: bool = True  # Enable speaker labeling
     # "pitch" (built-in F0 clustering, no extra deps) or "pyannote" (real embeddings,
-    # requires `pip install pyannote.audio` and HF token via env HF_TOKEN).
-    diarization_backend: str = "pitch"
+    # requires `uv sync --extra diarization` and HF token via env HF_TOKEN).
+    diarization_backend: str = "pyannote"
     diarization_max_speakers: int = 4  # Cap for pyannote clustering (pitch is hard-capped at 2)
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
@@ -87,6 +87,21 @@ class STTConfig:
     # 0.0 disables. Useful for low-gain microphones.
     agc_target_peak: float = 0.7
     agc_min_peak: float = 0.3  # Only boost when current peak is below this
+
+
+@dataclass
+class LLMConfig:
+    # Choix du moteur de résumé : "local" (mlx-lm, 100 % sur le Mac) ou
+    # "cloud" (API Claude, qualité supérieure mais le texte quitte le poste).
+    summary_provider: str = "local"
+    # Modèle Claude utilisé en mode cloud. Haiku 4.5 : rapide et peu coûteux,
+    # bien suffisant pour du résumé (cf. docs/cloud-architecture.md). Passer à
+    # claude-sonnet-4-6 / claude-opus-4-8 pour plus de qualité.
+    cloud_model: str = "claude-haiku-4-5"
+    # None → l'SDK anthropic lit la clé depuis l'environnement (ANTHROPIC_API_KEY).
+    # Ne jamais committer une clé en clair ici.
+    anthropic_api_key: str | None = None
+    cloud_max_tokens: int = 2048
 
 
 @dataclass
