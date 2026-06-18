@@ -11,7 +11,7 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 | Endpoint | État |
 |---|---|
 | `POST /v1/summary` (SSE) | **réel** — streame Claude (alias `haiku`/`sonnet`/`opus`) |
-| `WS /v1/transcribe` | **réel** — session STT (Deepgram) → events du contrat + métering. `STT_BACKEND=fake` pour le dev hors-ligne. Validation Deepgram live à faire. |
+| `WS /v1/transcribe` | **réel** — session STT (Deepgram **ou** Grok) → events du contrat + métering. `STT_BACKEND=fake` pour le dev hors-ligne. Validation live à faire. |
 | `POST /v1/auth/login` · `/refresh` | stub (jetons factices) |
 | `GET /v1/me` · `/v1/history` | stub |
 
@@ -20,8 +20,9 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 | Var | Rôle |
 |---|---|
 | `ANTHROPIC_API_KEY` | résumé Claude (`/v1/summary`) |
-| `DEEPGRAM_API_KEY` | transcription Deepgram (`/v1/transcribe`) |
-| `STT_BACKEND` | `deepgram` (défaut) ou `fake` (dev/test, sans réseau) |
+| `STT_BACKEND` | `deepgram` (défaut), `grok`, ou `fake` (dev/test, sans réseau) |
+| `DEEPGRAM_API_KEY` | si `STT_BACKEND=deepgram` |
+| `XAI_API_KEY` | si `STT_BACKEND=grok` |
 
 ## Lancer
 

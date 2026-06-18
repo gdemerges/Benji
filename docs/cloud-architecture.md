@@ -178,8 +178,10 @@ Règles :
 
 ## 10. Décisions ouvertes
 
-- Fournisseur STT : **Deepgram implémenté** côté backend (`app/stt/deepgram.py`),
-  validation live à faire. Hébergement EU/RGPD restant à trancher.
+- Fournisseur STT : **Deepgram et Grok (xAI) implémentés** côté backend
+  (`app/stt/`), sélection par `STT_BACKEND`. Tous deux : streaming WebSocket +
+  diarisation + FR. Grok ~0,20 $/h streaming (compétitif) mais récent
+  (avril 2026) ; Deepgram plus mûr. Validation live + arbitrage RGPD/EU à faire.
 - ~~Modèle Claude par défaut pour les résumés~~ → **décidé : `claude-haiku-4-5`**
   (rapide, peu coûteux, suffisant pour du résumé). Configurable via `LLMConfig`.
 - Stratégie de pricing (forfait vs quotas d'heures STT).
