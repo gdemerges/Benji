@@ -7,6 +7,7 @@ défaut — rien ne sort du Mac tant que l'utilisateur n'active pas le cloud.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
@@ -109,12 +110,101 @@ class CloudSummaryProvider:
         return "".join(chunks).strip() or None
 
 
+class RemoteSummaryProvider:
+    """Résumé via le backend Benji (POST /v1/summary, SSE).
+
+    La transcription part vers le backend (jamais la clé Anthropic, qui reste
+    côté serveur). Le backend résout l'alias de modèle. Cf. docs/api-contract.md.
+    """
+
+    name = "remote"
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None = None,
+        model_alias: str = "haiku",
+        timeout: float = 120.0,
+        transport=None,  # httpx transport injectable (tests)
+    ):
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._model_alias = model_alias
+        self._timeout = timeout
+        self._transport = transport
+
+    def summarize(
+        self, entries: list[dict], on_token: OnToken | None = None
+    ) -> str | None:
+        # Court-circuit local : inutile d'appeler le réseau pour une session vide
+        # ou trop courte (le backend renverrait 400 de toute façon).
+        if summarizer.prepare_transcription(entries) is None:
+            return None
+
+        import httpx
+
+        url = f"{self._base_url}/v1/summary"
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
+        payload = {
+            "entries": [
+                {
+                    "text": e.get("text", ""),
+                    "timestamp": e.get("timestamp"),
+                    "speaker": e.get("speaker"),
+                }
+                for e in entries
+            ],
+            "model": self._model_alias,
+        }
+
+        chunks: list[str] = []
+        with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
+            with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    resp.read()
+                    raise RuntimeError(
+                        f"Backend a répondu {resp.status_code}: {resp.text}"
+                    )
+                event: str | None = None
+                for line in resp.iter_lines():
+                    if not line:
+                        event = None
+                        continue
+                    if line.startswith("event:"):
+                        event = line[len("event:"):].strip()
+                    elif line.startswith("data:"):
+                        data = json.loads(line[len("data:"):].strip())
+                        if event == "token":
+                            piece = data.get("text", "")
+                            if piece:
+                                chunks.append(piece)
+                                if on_token is not None:
+                                    try:
+                                        on_token(piece)
+                                    except Exception as e:
+                                        log.warning("on_token callback failed: %s", e)
+                        elif event == "error":
+                            raise RuntimeError(
+                                data.get("message", "Erreur backend inconnue.")
+                            )
+                        # event == "done" : rien à faire de plus
+
+        return "".join(chunks).strip() or None
+
+
 def build_summary_provider(cfg) -> SummaryProvider:
     """Construit le provider de résumé d'après `LLMConfig`."""
-    if getattr(cfg, "summary_provider", "local") == "cloud":
+    provider = getattr(cfg, "summary_provider", "local")
+    if provider == "cloud":
         return CloudSummaryProvider(
             model=cfg.cloud_model,
             api_key=cfg.anthropic_api_key,
             max_tokens=cfg.cloud_max_tokens,
+        )
+    if provider == "remote":
+        return RemoteSummaryProvider(
+            base_url=cfg.backend_url,
+            token=cfg.backend_token,
+            model_alias=cfg.summary_model_alias,
         )
     return LocalSummaryProvider()

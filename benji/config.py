@@ -91,17 +91,23 @@ class STTConfig:
 
 @dataclass
 class LLMConfig:
-    # Choix du moteur de résumé : "local" (mlx-lm, 100 % sur le Mac) ou
-    # "cloud" (API Claude, qualité supérieure mais le texte quitte le poste).
+    # Choix du moteur de résumé :
+    #   "local"  — mlx-lm, 100 % sur le Mac (défaut)
+    #   "cloud"  — API Claude en direct (clé sur le poste ; pour dev/test)
+    #   "remote" — via le backend Benji (clé côté serveur ; chemin production)
     summary_provider: str = "local"
-    # Modèle Claude utilisé en mode cloud. Haiku 4.5 : rapide et peu coûteux,
-    # bien suffisant pour du résumé (cf. docs/cloud-architecture.md). Passer à
-    # claude-sonnet-4-6 / claude-opus-4-8 pour plus de qualité.
+    # --- mode "cloud" (Claude direct) ---
+    # Modèle Claude. Haiku 4.5 : rapide et peu coûteux, suffisant pour du résumé
+    # (cf. docs/cloud-architecture.md). Sonnet/Opus pour plus de qualité.
     cloud_model: str = "claude-haiku-4-5"
     # None → l'SDK anthropic lit la clé depuis l'environnement (ANTHROPIC_API_KEY).
     # Ne jamais committer une clé en clair ici.
     anthropic_api_key: str | None = None
     cloud_max_tokens: int = 2048
+    # --- mode "remote" (via backend) ---
+    backend_url: str = "http://127.0.0.1:8000"
+    backend_token: str | None = None          # jeton Bearer du backend
+    summary_model_alias: str = "haiku"        # alias logique envoyé au backend
 
 
 @dataclass
