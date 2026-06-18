@@ -66,6 +66,9 @@ class VADConfig:
 
 @dataclass
 class STTConfig:
+    # "local" : Whisper sur le Mac (défaut). "remote" : transcription via le
+    # backend Benji (cf. docs/api-contract.md ; coordonnées dans LLMConfig).
+    stt_provider: str = "local"
     model_size: str = field(default_factory=_default_model_size)
     language: str | None = "fr"  # Force French by default
     beam_size: int = 5  # Final-pass beam size (quality)

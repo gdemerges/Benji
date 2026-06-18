@@ -39,6 +39,8 @@ cloud = [
     # Résumé via l'API Claude (LLMConfig.summary_provider = "cloud").
     # Clé via la variable d'environnement ANTHROPIC_API_KEY.
     "anthropic>=0.40.0",
+    # Transcription via le backend Benji (STTConfig.stt_provider = "remote").
+    "websockets>=12",
 ]
 
 [project.scripts]

@@ -75,77 +75,110 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Benji")
 
+    remote_mode = stt_config.stt_provider == "remote"
+
     # Splash: load Whisper on a background thread so the UI stays responsive
     # and the user sees clear progress instead of a frozen process.
     splash = SplashWindow()
-    splash.set_status(f"Chargement du modèle Whisper '{stt_config.model_size}'…")
+    splash.set_status(
+        "Connexion au service de transcription…" if remote_mode
+        else f"Chargement du modèle Whisper '{stt_config.model_size}'…"
+    )
     splash.show()
     app.processEvents()
 
-    class _ModelLoader(QThread):
-        loaded = pyqtSignal(object)
-        failed = pyqtSignal(object)
-        warming = pyqtSignal()
+    transcriber = None
+    remote_stt = None
+    history = None
+    vad_thread = None
+    stt_supervisor = None
+    remote_thread = None
+    stt_stopping = threading.Event()
 
-        def run(self):
-            try:
-                t = Transcriber(
-                    transcribe_queue, display_queue, stt_config,
-                    stats=stats, sample_rate=audio_config.sample_rate,
-                )
-                self.warming.emit()
-                t.warmup()
-                self.loaded.emit(t)
-            except Exception as e:
-                self.failed.emit(e)
+    if remote_mode:
+        # Transcription côté backend : pas de Whisper, pas de VAD. Le micro est
+        # streamé au backend, dont les events alimentent display_queue.
+        from benji.history import TranscriptionHistory
+        from benji.stt.remote import build_remote_stt_client
+        history = TranscriptionHistory()
+        remote_stt = build_remote_stt_client(
+            audio_queue, display_queue, history, stt_config, llm_config,
+            sample_rate=audio_config.sample_rate,
+        )
+    else:
+        class _ModelLoader(QThread):
+            loaded = pyqtSignal(object)
+            failed = pyqtSignal(object)
+            warming = pyqtSignal()
 
-    loader = _ModelLoader()
-    loop = QEventLoop()
-    transcriber_holder: dict = {}
-    load_error: dict = {}
-    loader.loaded.connect(lambda t: (transcriber_holder.__setitem__("t", t), loop.quit()))
-    loader.failed.connect(lambda e: (load_error.__setitem__("e", e), loop.quit()))
-    loader.warming.connect(lambda: splash.set_status("Préchauffage du modèle…"))
-    loader.start()
-    loop.exec()
-    loader.wait()
+            def run(self):
+                try:
+                    t = Transcriber(
+                        transcribe_queue, display_queue, stt_config,
+                        stats=stats, sample_rate=audio_config.sample_rate,
+                    )
+                    self.warming.emit()
+                    t.warmup()
+                    self.loaded.emit(t)
+                except Exception as e:
+                    self.failed.emit(e)
 
-    if "e" in load_error:
-        splash.close()
-        raise load_error["e"]
+        loader = _ModelLoader()
+        loop = QEventLoop()
+        transcriber_holder: dict = {}
+        load_error: dict = {}
+        loader.loaded.connect(lambda t: (transcriber_holder.__setitem__("t", t), loop.quit()))
+        loader.failed.connect(lambda e: (load_error.__setitem__("e", e), loop.quit()))
+        loader.warming.connect(lambda: splash.set_status("Préchauffage du modèle…"))
+        loader.start()
+        loop.exec()
+        loader.wait()
 
-    transcriber = transcriber_holder["t"]
+        if "e" in load_error:
+            splash.close()
+            raise load_error["e"]
+
+        transcriber = transcriber_holder["t"]
+        history = transcriber.history
+
     splash.set_status("Démarrage de la capture audio…")
     app.processEvents()
 
-    vad_thread = threading.Thread(target=vad.run, daemon=True, name="VAD")
+    if remote_mode:
+        remote_thread = threading.Thread(
+            target=remote_stt.run, daemon=True, name="RemoteSTT"
+        )
+        remote_thread.start()
+    else:
+        vad_thread = threading.Thread(target=vad.run, daemon=True, name="VAD")
 
-    # Supervisor: restart the STT thread if it dies. The transcriber's run loop
-    # already catches per-segment errors; this is the last-resort safety net for
-    # anything that escapes (e.g. backend crash, OOM in a tokenizer).
-    stt_thread_ref: dict = {}
-    stt_stopping = threading.Event()
+        # Supervisor: restart the STT thread if it dies. The transcriber's run loop
+        # already catches per-segment errors; this is the last-resort safety net for
+        # anything that escapes (e.g. backend crash, OOM in a tokenizer).
+        stt_thread_ref: dict = {}
 
-    def _stt_supervisor():
-        backoff = 1.0
-        while not stt_stopping.is_set():
-            t = threading.Thread(target=transcriber.run, daemon=True, name="STT")
-            stt_thread_ref["t"] = t
-            t.start()
-            t.join()
-            if stt_stopping.is_set():
-                return
-            log.error("STT thread exited unexpectedly; restarting in %.1fs", backoff)
-            if stats is not None:
-                stats.record_drop("stt_thread_restart")
-            stt_stopping.wait(timeout=backoff)
-            backoff = min(backoff * 2, 30.0)
+        def _stt_supervisor():
+            backoff = 1.0
+            while not stt_stopping.is_set():
+                t = threading.Thread(target=transcriber.run, daemon=True, name="STT")
+                stt_thread_ref["t"] = t
+                t.start()
+                t.join()
+                if stt_stopping.is_set():
+                    return
+                log.error("STT thread exited unexpectedly; restarting in %.1fs", backoff)
+                if stats is not None:
+                    stats.record_drop("stt_thread_restart")
+                stt_stopping.wait(timeout=backoff)
+                backoff = min(backoff * 2, 30.0)
 
-    stt_supervisor = threading.Thread(target=_stt_supervisor, daemon=True, name="STT-supervisor")
-    vad_thread.start()
-    stt_supervisor.start()
+        stt_supervisor = threading.Thread(
+            target=_stt_supervisor, daemon=True, name="STT-supervisor"
+        )
+        vad_thread.start()
+        stt_supervisor.start()
+
     capture.start()
-
     splash.close()
 
     def qt_exception_hook(exc_type, exc_value, exc_traceback):
@@ -190,7 +223,7 @@ def main():
 
         main_window = MainWindow(
             bus=bus,
-            history=transcriber.history,
+            history=history,
             session_start=session_start,
             summary_worker=summary_worker,
             on_minimize=lambda: controller.show_overlay() if controller else None,
@@ -261,9 +294,16 @@ def main():
     capture.stop()
     audio_queue.put(None)
     stt_stopping.set()
-    transcribe_queue.put(None)
-    vad_thread.join(timeout=2)
-    stt_supervisor.join(timeout=3)
+    if remote_stt is not None:
+        remote_stt.stop()
+    if not remote_mode:
+        transcribe_queue.put(None)
+    if vad_thread is not None:
+        vad_thread.join(timeout=2)
+    if stt_supervisor is not None:
+        stt_supervisor.join(timeout=3)
+    if remote_thread is not None:
+        remote_thread.join(timeout=2)
 
     sys.exit(exit_code)
 
