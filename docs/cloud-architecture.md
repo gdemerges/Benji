@@ -99,28 +99,14 @@ de prompts existante. WebSocket natif pour le streaming audio.
 ## 4. Contrat d'API (à figer en premier)
 
 C'est **l'étape structurante** : une fois le contrat stable, n'importe quel
-client s'y branche.
+client s'y branche. La spécification normative complète vit dans un document
+dédié : **[`api-contract.md`](./api-contract.md)** (v1).
 
-### 4.1 WebSocket — transcription temps réel
-
-```
-client → serveur : { "type": "audio", "data": <chunk PCM/opus base64> }
-serveur → client : { "type": "partial", "text": "..." }
-serveur → client : { "type": "final",   "text": "...", "speaker": "A" }
-serveur → client : { "type": "vad",     "speaking": true }
-```
-
-Ces events reprennent volontairement le vocabulaire du `display_queue` actuel
-(`word`, `final_text`, `vad_status`) pour minimiser l'écart côté UI.
-
-### 4.2 REST
-
-```
-POST /auth/login            → token
-GET  /me                    → état abonnement, quotas
-POST /summary               → déclenche un résumé (stream SSE des tokens)
-GET  /history               → historique des sessions
-```
+Résumé : WebSocket `/v1/transcribe` (audio binaire montant + events
+`segment_start` / `word` / `final_text` / `vad_status` descendants, alignés sur
+le `display_queue` interne) ; REST `/v1/auth/*`, `/v1/me`, `/v1/history` ; SSE
+`/v1/summary`. Auth Bearer (JWT + refresh), métering des secondes STT côté
+serveur.
 
 ## 5. Providers cloud envisagés
 
