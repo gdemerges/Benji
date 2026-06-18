@@ -35,6 +35,12 @@ class Theme:
         c.setAlpha(int(255 * pct / 100))
         return c
 
+    @staticmethod
+    def color_alpha(color: QColor, pct: int) -> QColor:
+        c = QColor(color)
+        c.setAlpha(int(255 * pct / 100))
+        return c
+
 
 def _is_dark() -> bool:
     try:
@@ -74,6 +80,27 @@ def current_theme() -> Theme:
 def install_theme_listener(callback: Callable[[], None]) -> None:
     """Appelle `callback` chaque fois que le système bascule light/dark."""
     QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _scheme: callback())
+
+
+# Speaker colors: a fixed, legible-on-both-themes palette. A label maps to a
+# stable index so the same speaker always keeps the same color across the
+# overlay and the chat-log.
+_SPEAKER_PALETTE = [
+    QColor("#0A84FF"),  # blue
+    QColor("#FF375F"),  # pink
+    QColor("#30D158"),  # green
+    QColor("#FF9F0A"),  # orange
+    QColor("#BF5AF2"),  # purple
+    QColor("#40C8E0"),  # teal
+    QColor("#FFD60A"),  # yellow
+    QColor("#5E5CE6"),  # indigo
+]
+
+
+def speaker_color(label: str) -> QColor:
+    """Stable, distinct color for a speaker label (e.g. 'A', 'B', 'S26')."""
+    key = sum(ord(c) for c in label) if label else 0
+    return QColor(_SPEAKER_PALETTE[key % len(_SPEAKER_PALETTE)])
 
 
 # Font stacks

@@ -40,11 +40,16 @@ class PartialBubble(QWidget):
 
     def apply_theme(self) -> None:
         t = current_theme()
-        bg = t.accent_alpha(10)
+        bg = t.accent_alpha(16 if t.is_dark else 10)
+        rail = t.accent_alpha(90 if t.is_dark else 75)
         self.setStyleSheet(f"""
             PartialBubble {{
                 background-color: rgba({bg.red()},{bg.green()},{bg.blue()},{bg.alpha()});
-                border-radius: 8px;
+                border-left: 3px solid rgba({rail.red()},{rail.green()},{rail.blue()},{rail.alpha()});
+                border-top-left-radius: 4px;
+                border-bottom-left-radius: 4px;
+                border-top-right-radius: 10px;
+                border-bottom-right-radius: 10px;
             }}
         """)
         self.text_label.setStyleSheet(

@@ -133,9 +133,19 @@ class MainWindow(QMainWindow):
         self._refresh_summarize_enabled()
 
     def _apply_theme(self) -> None:
-        bg = current_theme().window_background
+        t = current_theme()
+        bg = t.window_background
+        delta = 6 if t.is_dark else 5
+        top = bg.lighter(100 + delta)
+        bottom = bg.darker(100 + delta)
         self.setStyleSheet(f"""
-            QMainWindow {{ background-color: rgb({bg.red()},{bg.green()},{bg.blue()}); }}
+            QMainWindow {{
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgb({top.red()},{top.green()},{top.blue()}),
+                    stop:1 rgb({bottom.red()},{bottom.green()},{bottom.blue()})
+                );
+            }}
             QToolBar {{ background: transparent; border: none; padding: 8px 12px; spacing: 8px; }}
         """)
         self.status_pill.apply_theme()
