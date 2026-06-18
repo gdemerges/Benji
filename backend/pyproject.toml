@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "anthropic>=0.40.0",
     "pydantic>=2",
+    "websockets>=12",  # client streaming Deepgram (app/stt/deepgram.py)
 ]
 
 [dependency-groups]

@@ -1,19 +1,24 @@
 """WebSocket /v1/transcribe — transcription temps réel (cf. api-contract §3).
 
-État : **squelette conforme au contrat**. Le handshake, l'auth, la réception des
-frames audio binaires et le métering des secondes sont en place. Le branchement
-d'un vrai provider STT (Deepgram, etc.) qui émet `segment_start`/`word`/
-`final_text`/`vad_status` est l'étape suivante (TODO ci-dessous).
+Handshake `start`/`ready` + auth, puis deux flux concurrents :
+- *feeder* : frames audio binaires du client → session STT (et métering)
+- *forwarder* : events de la session (vad/segment_start/word/final_text) → client
+
+Le provider STT concret est choisi par `app.stt.make_session` (Deepgram en prod,
+Fake en test).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.auth import user_from_token
+from app.stt import make_session
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,18 +34,21 @@ async def _send(ws: WebSocket, payload: dict) -> None:
     await ws.send_text(json.dumps(payload, ensure_ascii=False))
 
 
+async def _forward(session, ws: WebSocket) -> None:
+    async for event in session.events():
+        await _send(ws, event)
+
+
 @router.websocket("/v1/transcribe")
 async def transcribe(ws: WebSocket) -> None:
     await ws.accept()
 
     # 1) Premier message : `start` (auth + config audio).
     try:
-        raw = await ws.receive_text()
-        start = json.loads(raw)
-    except (WebSocketDisconnect, json.JSONDecodeError, KeyError):
+        start = json.loads(await ws.receive_text())
+    except (WebSocketDisconnect, json.JSONDecodeError):
         await ws.close(code=WS_UNAUTHENTICATED)
         return
-
     if start.get("type") != "start":
         await ws.close(code=WS_UNAUTHENTICATED)
         return
@@ -56,9 +64,20 @@ async def transcribe(ws: WebSocket) -> None:
     audio = start.get("audio") or {}
     sample_rate = int(audio.get("sample_rate", 16000)) or 16000
 
-    await _send(ws, {"type": "ready"})
+    # 2) Ouverture de la session STT.
+    try:
+        session = make_session(start)
+        await session.open()
+    except Exception as e:
+        log.warning("STT session open failed: %s", e)
+        await _send(ws, {"type": "error", "code": "upstream_error", "message": str(e)})
+        await ws.close()
+        return
 
-    # 2) Boucle : frames audio binaires + contrôle JSON.
+    await _send(ws, {"type": "ready"})
+    forwarder = asyncio.create_task(_forward(session, ws))
+
+    # 3) Feeder : frames audio + contrôle.
     total_bytes = 0
     try:
         while True:
@@ -67,8 +86,7 @@ async def transcribe(ws: WebSocket) -> None:
                 break
             if (data := msg.get("bytes")) is not None:
                 total_bytes += len(data)
-                # TODO(stt): pousser `data` dans le provider STT et relayer ses
-                # events (segment_start / word / final_text / vad_status).
+                await session.send_audio(data)
                 continue
             if (text := msg.get("text")) is not None:
                 try:
@@ -76,14 +94,19 @@ async def transcribe(ws: WebSocket) -> None:
                 except json.JSONDecodeError:
                     continue
                 if ctrl.get("type") == "stop":
+                    await session.finish()
                     break
     except WebSocketDisconnect:
-        return
+        pass
+    finally:
+        await session.close()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(forwarder, timeout=5)
+        if not forwarder.done():
+            forwarder.cancel()
 
-    # 3) Clôture : conso facturable (secondes d'audio reçues).
+    # 4) Clôture : conso facturable (secondes d'audio reçues).
     stt_seconds = round(total_bytes / (sample_rate * _BYTES_PER_SAMPLE), 1)
-    try:
+    with contextlib.suppress(RuntimeError):
         await _send(ws, {"type": "closed", "stt_seconds": stt_seconds})
         await ws.close()
-    except RuntimeError:
-        pass  # déjà fermé côté client

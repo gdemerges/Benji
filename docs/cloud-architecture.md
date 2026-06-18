@@ -178,7 +178,8 @@ Règles :
 
 ## 10. Décisions ouvertes
 
-- Fournisseur STT + hébergement EU/RGPD.
+- Fournisseur STT : **Deepgram implémenté** côté backend (`app/stt/deepgram.py`),
+  validation live à faire. Hébergement EU/RGPD restant à trancher.
 - ~~Modèle Claude par défaut pour les résumés~~ → **décidé : `claude-haiku-4-5`**
   (rapide, peu coûteux, suffisant pour du résumé). Configurable via `LLMConfig`.
 - Stratégie de pricing (forfait vs quotas d'heures STT).

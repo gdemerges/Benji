@@ -78,7 +78,8 @@ def test_summary_streams_sse(monkeypatch):
     assert "event: done" in body
 
 
-def test_transcribe_handshake_and_metering():
+def test_transcribe_streams_events_and_meters(monkeypatch):
+    monkeypatch.setenv("STT_BACKEND", "fake")  # FakeSTTSession, aucun fournisseur réel
     with client.websocket_connect("/v1/transcribe") as ws:
         ws.send_text(json.dumps({
             "type": "start",
@@ -89,11 +90,29 @@ def test_transcribe_handshake_and_metering():
 
         # 32000 octets pcm_s16le @ 16 kHz mono = 1.0 s d'audio.
         ws.send_bytes(b"\x00" * 32000)
+        assert ws.receive_json() == {"type": "vad_status", "speaking": True}
+        assert ws.receive_json() == {"type": "segment_start"}
+        assert ws.receive_json() == {"type": "word", "text": "bonjour"}
+        assert ws.receive_json() == {"type": "word", "text": "le"}
+        assert ws.receive_json() == {"type": "word", "text": "monde"}
+
         ws.send_text(json.dumps({"type": "stop"}))
+        assert ws.receive_json() == {"type": "final_text", "text": "Bonjour le monde"}
+        assert ws.receive_json() == {"type": "vad_status", "speaking": False}
 
         closed = ws.receive_json()
         assert closed["type"] == "closed"
         assert closed["stt_seconds"] == pytest.approx(1.0)
+
+
+def test_transcribe_upstream_error_when_no_stt_key(monkeypatch):
+    monkeypatch.setenv("STT_BACKEND", "deepgram")
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    with client.websocket_connect("/v1/transcribe") as ws:
+        ws.send_text(json.dumps({"type": "start", "token": "devtoken123"}))
+        err = ws.receive_json()
+        assert err["type"] == "error"
+        assert err["code"] == "upstream_error"
 
 
 def test_transcribe_rejects_unauthenticated():
