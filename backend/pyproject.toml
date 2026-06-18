@@ -8,7 +8,8 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "anthropic>=0.40.0",
     "pydantic>=2",
-    "websockets>=12",  # client streaming Deepgram (app/stt/deepgram.py)
+    "websockets>=12",  # client streaming STT (Deepgram / Grok)
+    "pyjwt>=2.8",      # jetons d'accès/refresh (HS256)
 ]
 
 [dependency-groups]

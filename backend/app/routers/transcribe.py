@@ -17,7 +17,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.auth import user_from_token
+from app.auth import authenticate
+from app.deps import get_db
 from app.stt import make_session
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ router = APIRouter()
 # Codes de fermeture WS (cf. api-contract §6).
 WS_UNAUTHENTICATED = 4401
 WS_FORBIDDEN = 4403
+WS_QUOTA = 4429
 
 _BYTES_PER_SAMPLE = 2  # pcm_s16le
 
@@ -53,12 +55,21 @@ async def transcribe(ws: WebSocket) -> None:
         await ws.close(code=WS_UNAUTHENTICATED)
         return
 
-    user = user_from_token(start.get("token"))
+    db = get_db()
+    user = authenticate(start.get("token"), db)
     if user is None:
         await ws.close(code=WS_UNAUTHENTICATED)
         return
     if not user.cloud_stt:
         await ws.close(code=WS_FORBIDDEN)
+        return
+
+    # Quota STT (le poste facturable) : refus si le plafond du plan est atteint.
+    limit = user.stt_seconds_limit
+    if limit is not None and db.get_usage(user.user_id) >= limit:
+        await _send(ws, {"type": "error", "code": "quota_exceeded",
+                         "message": "Quota STT atteint."})
+        await ws.close(code=WS_QUOTA)
         return
 
     audio = start.get("audio") or {}
@@ -105,8 +116,11 @@ async def transcribe(ws: WebSocket) -> None:
         if not forwarder.done():
             forwarder.cancel()
 
-    # 4) Clôture : conso facturable (secondes d'audio reçues).
+    # 4) Clôture : conso facturable (secondes d'audio reçues) → métering.
     stt_seconds = round(total_bytes / (sample_rate * _BYTES_PER_SAMPLE), 1)
+    if stt_seconds > 0:
+        with contextlib.suppress(Exception):
+            db.add_usage(user.user_id, stt_seconds)
     with contextlib.suppress(RuntimeError):
         await _send(ws, {"type": "closed", "stt_seconds": stt_seconds})
         await ws.close()

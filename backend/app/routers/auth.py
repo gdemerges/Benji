@@ -1,40 +1,58 @@
-"""/v1/auth/* — délivrance de jetons (stub v1).
-
-⚠️ Stub : accepte n'importe quel couple email/mot de passe et renvoie des jetons
-factices. À remplacer par une vraie vérification d'identité + signature JWT.
-"""
+"""/v1/auth/* — inscription et délivrance de jetons (JWT réel)."""
 
 from __future__ import annotations
 
-import uuid
+import sqlite3
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.config import ACCESS_TTL_SECONDS
+from app.db import Database
+from app.deps import get_db
 from app.errors import ApiError
-from app.schemas import LoginRequest, RefreshRequest, TokenResponse
+from app.plans import DEFAULT_PLAN
+from app.schemas import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
+from app.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter()
 
-_ACCESS_TTL = 900  # 15 min
 
-
-def _issue(subject: str) -> TokenResponse:
+def _tokens(user_id: str) -> TokenResponse:
     return TokenResponse(
-        access_token=f"dev.{subject}.{uuid.uuid4().hex}",
-        refresh_token=f"refresh.{uuid.uuid4().hex}",
-        expires_in=_ACCESS_TTL,
+        access_token=create_access_token(user_id),
+        refresh_token=create_refresh_token(user_id),
+        expires_in=ACCESS_TTL_SECONDS,
     )
 
 
-@router.post("/v1/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest) -> TokenResponse:
+@router.post("/v1/auth/register", response_model=TokenResponse)
+async def register(req: RegisterRequest, db: Database = Depends(get_db)) -> TokenResponse:
     if not req.email or not req.password:
         raise ApiError("bad_request", "email et password requis.", 400)
-    return _issue(req.email)
+    try:
+        user = db.create_user(req.email, hash_password(req.password), plan=DEFAULT_PLAN)
+    except sqlite3.IntegrityError as e:
+        raise ApiError("bad_request", "Email déjà utilisé.", 400) from e
+    return _tokens(user["id"])
+
+
+@router.post("/v1/auth/login", response_model=TokenResponse)
+async def login(req: LoginRequest, db: Database = Depends(get_db)) -> TokenResponse:
+    user = db.get_user_by_email(req.email)
+    if user is None or not verify_password(req.password, user["password_hash"]):
+        raise ApiError("unauthenticated", "Identifiants invalides.", 401)
+    return _tokens(user["id"])
 
 
 @router.post("/v1/auth/refresh", response_model=TokenResponse)
-async def refresh(req: RefreshRequest) -> TokenResponse:
-    if not req.refresh_token:
-        raise ApiError("unauthenticated", "refresh_token requis.", 401)
-    return _issue("refreshed")
+async def refresh(req: RefreshRequest, db: Database = Depends(get_db)) -> TokenResponse:
+    user_id = decode_token(req.refresh_token, "refresh")
+    if user_id is None or db.get_user(user_id) is None:
+        raise ApiError("unauthenticated", "refresh_token invalide ou expiré.", 401)
+    return _tokens(user_id)

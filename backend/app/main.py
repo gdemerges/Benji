@@ -11,7 +11,7 @@ import logging
 from fastapi import FastAPI
 
 from app.errors import ApiError, api_error_handler
-from app.routers import account, auth, history, summary, transcribe
+from app.routers import account, auth, billing, history, summary, transcribe
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,6 +22,7 @@ app.include_router(auth.router, tags=["auth"])
 app.include_router(account.router, tags=["account"])
 app.include_router(summary.router, tags=["summary"])
 app.include_router(history.router, tags=["history"])
+app.include_router(billing.router, tags=["billing"])
 app.include_router(transcribe.router, tags=["transcribe"])
 
 

@@ -28,3 +28,22 @@ def resolve_model(alias: str | None) -> str:
 
 def anthropic_api_key() -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY")
+
+
+# --- Auth / JWT ---
+
+ACCESS_TTL_SECONDS = 900            # 15 min
+REFRESH_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 jours
+
+
+def jwt_secret() -> str:
+    # ⚠️ Défaut non sûr : définir JWT_SECRET en production.
+    return os.environ.get("JWT_SECRET", "dev-insecure-secret-change-me-please-32b+")
+
+
+def db_path() -> str:
+    return os.environ.get("BENJI_DB_PATH", "benji.db")
+
+
+def stripe_webhook_secret() -> str | None:
+    return os.environ.get("STRIPE_WEBHOOK_SECRET")

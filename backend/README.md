@@ -10,10 +10,12 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 
 | Endpoint | État |
 |---|---|
-| `POST /v1/summary` (SSE) | **réel** — streame Claude (alias `haiku`/`sonnet`/`opus`) |
-| `WS /v1/transcribe` | **réel** — session STT (Deepgram **ou** Grok) → events du contrat + métering. `STT_BACKEND=fake` pour le dev hors-ligne. Validation live à faire. |
-| `POST /v1/auth/login` · `/refresh` | stub (jetons factices) |
-| `GET /v1/me` · `/v1/history` | stub |
+| `POST /v1/auth/register` · `login` · `refresh` | **réel** — comptes SQLite, mot de passe PBKDF2, jetons JWT (HS256) |
+| `GET /v1/me` | **réel** — plan, droits (`free`/`pro`), quota STT depuis le métering |
+| `POST /v1/summary` (SSE) | **réel** — streame Claude (alias `haiku`/`sonnet`/`opus`), gated `cloud_summary` |
+| `WS /v1/transcribe` | **réel** — STT (Deepgram/Grok) + auth + **quota** + métering. `STT_BACKEND=fake` hors-ligne. Validation live à faire. |
+| `POST /v1/billing/webhook` | **réel** — signature HMAC Stripe vérifiée, bascule de plan. Checkout/Stripe live = TODO |
+| `GET /v1/history` | stub |
 
 ### Variables d'environnement
 
@@ -23,6 +25,9 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 | `STT_BACKEND` | `deepgram` (défaut), `grok`, ou `fake` (dev/test, sans réseau) |
 | `DEEPGRAM_API_KEY` | si `STT_BACKEND=deepgram` |
 | `XAI_API_KEY` | si `STT_BACKEND=grok` |
+| `JWT_SECRET` | secret de signature JWT (**obligatoire en prod**) |
+| `BENJI_DB_PATH` | chemin SQLite (défaut `benji.db`) |
+| `STRIPE_WEBHOOK_SECRET` | vérification des webhooks Stripe (sinon non vérifié, dev only) |
 
 ## Lancer
 
@@ -45,8 +50,8 @@ Les tests sont hermétiques (Claude est mocké, aucun appel réseau).
 
 ## Prochaines étapes
 
-1. Valider Deepgram en conditions réelles (clé + audio FR) et affiner le mapping
-   des events (`app/stt/deepgram.py`).
-2. Brancher le client macOS sur `/v1/transcribe` (provider STT distant côté app).
-3. Vraie auth (JWT) + plans, en remplacement des stubs (`app/auth.py`).
-4. Facturation (Stripe/Paddle) + persistance du métering et de l'historique.
+1. Valider STT (Deepgram/Grok) en conditions réelles + flux temps réel app↔backend.
+2. Intégration Stripe live : création de Checkout Sessions, portail client,
+   produits/prix (le webhook + la bascule de plan sont déjà en place).
+3. Persistance de l'historique (`/v1/history`) + sync multi-appareils.
+4. Migration SQLite → Postgres pour le multi-instance (interface `Database` isolée).

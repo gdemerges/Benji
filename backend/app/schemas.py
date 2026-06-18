@@ -6,6 +6,11 @@ from pydantic import BaseModel, Field
 
 # --- Auth (§1) ---
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
