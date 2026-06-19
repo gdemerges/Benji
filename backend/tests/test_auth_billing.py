@@ -104,8 +104,82 @@ def test_webhook_signature_verification(client, monkeypatch):
     assert good.status_code == 200
 
 
-def test_checkout_stub_requires_auth(client, auth):
+def test_checkout_stub_requires_auth(client, auth, monkeypatch):
+    # Sans clé Stripe → repli stub.
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     assert client.post("/v1/billing/checkout").status_code == 401
     r = client.post("/v1/billing/checkout", headers=auth)
     assert r.status_code == 200
     assert "checkout_url" in r.json()
+
+
+class _FakeSession:
+    """Mime `stripe.checkout.Session` / `stripe.billing_portal.Session`."""
+
+    captured: dict = {}
+
+    @classmethod
+    def create(cls, **params):
+        cls.captured = params
+        return type("S", (), {"url": "https://stripe.test/session/xyz"})()
+
+
+def _fake_stripe():
+    return type(
+        "stripe",
+        (),
+        {
+            "checkout": type("c", (), {"Session": _FakeSession}),
+            "billing_portal": type("b", (), {"Session": _FakeSession}),
+        },
+    )
+
+
+def test_checkout_live_creates_session(client, auth, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_pro")
+    from app.routers import billing
+    monkeypatch.setattr(billing, "_stripe", _fake_stripe)
+
+    uid = deps.get_db().get_user_by_email("free@b.c")["id"]
+    r = client.post("/v1/billing/checkout", headers=auth)
+    assert r.status_code == 200
+    assert r.json()["checkout_url"] == "https://stripe.test/session/xyz"
+    # La session relie bien notre utilisateur (pour le webhook) et le prix Pro.
+    sent = _FakeSession.captured
+    assert sent["mode"] == "subscription"
+    assert sent["client_reference_id"] == uid
+    assert sent["customer_email"] == "free@b.c"
+    assert sent["line_items"] == [{"price": "price_pro", "quantity": 1}]
+
+
+def test_checkout_live_reuses_existing_customer(client, auth, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_pro")
+    from app.routers import billing
+    monkeypatch.setattr(billing, "_stripe", _fake_stripe)
+
+    db = deps.get_db()
+    uid = db.get_user_by_email("free@b.c")["id"]
+    db.link_stripe_customer(uid, "cus_existing")
+
+    client.post("/v1/billing/checkout", headers=auth)
+    sent = _FakeSession.captured
+    assert sent["customer"] == "cus_existing"
+    assert "customer_email" not in sent
+
+
+def test_portal_requires_linked_customer(client, auth, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
+    from app.routers import billing
+    monkeypatch.setattr(billing, "_stripe", _fake_stripe)
+
+    # Pas encore de client Stripe → 400.
+    assert client.post("/v1/billing/portal", headers=auth).status_code == 400
+
+    db = deps.get_db()
+    db.link_stripe_customer(db.get_user_by_email("free@b.c")["id"], "cus_42")
+    r = client.post("/v1/billing/portal", headers=auth)
+    assert r.status_code == 200
+    assert r.json()["portal_url"] == "https://stripe.test/session/xyz"
+    assert _FakeSession.captured["customer"] == "cus_42"

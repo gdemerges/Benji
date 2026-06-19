@@ -240,7 +240,7 @@ def main():
 
     # Menu-bar tray icon (Quit / Show history / Show summary / Show window in .app mode)
     _show_main_cb = (lambda: controller.show_window()) if controller is not None else None
-    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb)  # noqa: F841 (keep ref)
+    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb, llm_cfg=llm_config)  # noqa: F841 (keep ref)
 
     # Optional: rolling live summary
     live_summarizer = None

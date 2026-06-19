@@ -1,12 +1,11 @@
-"""Facturation (fondations).
+"""Facturation Stripe.
 
-- POST /v1/billing/checkout : amorce un abonnement (stub — l'intégration Stripe
-  réelle, création de Checkout Session via l'API Stripe, reste à brancher).
+- POST /v1/billing/checkout : crée une **Checkout Session** Stripe (abonnement Pro)
+  et renvoie son URL. Sans clé configurée → repli stub (dev/CI).
+- POST /v1/billing/portal : ouvre le **Billing Portal** Stripe pour gérer/résilier
+  l'abonnement (nécessite un client Stripe déjà lié).
 - POST /v1/billing/webhook : reçoit les events Stripe, **signature HMAC vérifiée**
   (si STRIPE_WEBHOOK_SECRET défini), et met à jour le plan de l'utilisateur.
-
-L'intégration Stripe live (clés, produits, portail) est laissée en TODO ; la
-vérification de signature et la bascule de plan sont, elles, réelles et testées.
 """
 
 from __future__ import annotations
@@ -19,13 +18,32 @@ import logging
 from fastapi import APIRouter, Depends, Header, Request
 
 from app.auth import User, require_user
-from app.config import stripe_webhook_secret
+from app.config import (
+    billing_cancel_url,
+    billing_portal_return_url,
+    billing_success_url,
+    stripe_price_id,
+    stripe_secret_key,
+    stripe_webhook_secret,
+)
 from app.db import Database
 from app.deps import get_db
 from app.errors import ApiError
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _stripe():
+    """Charge la lib Stripe à la demande et arme la clé secrète.
+
+    Import paresseux : sans clé configurée, le code (et les tests) ne dépend pas
+    de `stripe`. Les tests peuvent monkeypatcher cette fonction.
+    """
+    import stripe
+
+    stripe.api_key = stripe_secret_key()
+    return stripe
 
 
 def _verify_stripe_signature(payload: bytes, sig_header: str | None, secret: str) -> bool:
@@ -44,13 +62,69 @@ def _verify_stripe_signature(payload: bytes, sig_header: str | None, secret: str
 
 
 @router.post("/v1/billing/checkout")
-async def checkout(user: User = Depends(require_user)) -> dict:
-    # TODO(stripe): créer une vraie Checkout Session via l'API Stripe et
-    # renvoyer son URL. Pour l'instant, stub.
-    return {
-        "checkout_url": "https://billing.example/checkout/stub",
-        "note": "stub — intégration Stripe à brancher",
+async def checkout(
+    user: User = Depends(require_user),
+    db: Database = Depends(get_db),
+) -> dict:
+    secret, price = stripe_secret_key(), stripe_price_id()
+    if not secret or not price:
+        # Stripe non configuré → stub (dev/CI). Le client traite l'URL comme
+        # n'importe quelle Checkout Session.
+        log.warning("STRIPE_SECRET_KEY/STRIPE_PRICE_ID absents — checkout stub (dev only)")
+        return {
+            "checkout_url": "https://billing.example/checkout/stub",
+            "note": "stub — Stripe non configuré",
+        }
+
+    row = db.get_user(user.user_id) or {}
+    params: dict = {
+        "mode": "subscription",
+        "line_items": [{"price": price, "quantity": 1}],
+        # Relie la session à notre utilisateur : le webhook s'en sert pour
+        # basculer le plan (cf. webhook ci-dessous).
+        "client_reference_id": user.user_id,
+        "success_url": billing_success_url(),
+        "cancel_url": billing_cancel_url(),
     }
+    # Réutilise le client Stripe existant si on le connaît, sinon pré-remplit
+    # l'email pour qu'un seul client soit créé côté Stripe.
+    if row.get("stripe_customer_id"):
+        params["customer"] = row["stripe_customer_id"]
+    elif row.get("email"):
+        params["customer_email"] = row["email"]
+
+    try:
+        session = _stripe().checkout.Session.create(**params)
+    except Exception as e:
+        log.exception("Stripe: création Checkout Session échouée")
+        raise ApiError("upstream_error",
+                       "Impossible de créer la session de paiement.", 502) from e
+    return {"checkout_url": session.url}
+
+
+@router.post("/v1/billing/portal")
+async def portal(
+    user: User = Depends(require_user),
+    db: Database = Depends(get_db),
+) -> dict:
+    """Portail de gestion d'abonnement (changement de carte, résiliation…)."""
+    if not stripe_secret_key():
+        raise ApiError("bad_request", "Facturation non configurée.", 400)
+    row = db.get_user(user.user_id) or {}
+    customer = row.get("stripe_customer_id")
+    if not customer:
+        raise ApiError("bad_request", "Aucun abonnement à gérer.", 400)
+
+    try:
+        session = _stripe().billing_portal.Session.create(
+            customer=customer,
+            return_url=billing_portal_return_url(),
+        )
+    except Exception as e:
+        log.exception("Stripe: création Billing Portal Session échouée")
+        raise ApiError("upstream_error",
+                       "Impossible d'ouvrir le portail de facturation.", 502) from e
+    return {"portal_url": session.url}
 
 
 @router.post("/v1/billing/webhook")

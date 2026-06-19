@@ -232,6 +232,19 @@ droit manquant, `4429` quota dépassé.
 - Le résumé est compté mais négligeable (coût ~0,008 $/résumé en Haiku).
 - Dépassement de quota → `quota_exceeded` (429 / event / close 4429).
 
+### Stripe (abonnement Pro)
+
+- `POST /v1/billing/checkout` (auth) → `{ "checkout_url" }`. Crée une Checkout
+  Session Stripe en mode `subscription` (Price `STRIPE_PRICE_ID`), reliée à
+  l'utilisateur via `client_reference_id`. Sans `STRIPE_SECRET_KEY` → repli stub.
+- `POST /v1/billing/portal` (auth) → `{ "portal_url" }`. Billing Portal Stripe
+  pour gérer/résilier (requiert un client Stripe lié, sinon `400`).
+- `POST /v1/billing/webhook` → bascule de plan (`pro`/`free`) sur les events
+  `checkout.session.completed`, `customer.subscription.*`. Signature `Stripe-
+  Signature` vérifiée si `STRIPE_WEBHOOK_SECRET` défini, sinon `401`.
+- Config : `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`,
+  `BILLING_SUCCESS_URL`, `BILLING_CANCEL_URL`, `BILLING_PORTAL_RETURN_URL`.
+
 ## 8. Décisions ouvertes
 
 - **Encodage audio v1** : PCM `pcm_s16le`/16 kHz retenu pour la simplicité.

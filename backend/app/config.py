@@ -47,3 +47,27 @@ def db_path() -> str:
 
 def stripe_webhook_secret() -> str | None:
     return os.environ.get("STRIPE_WEBHOOK_SECRET")
+
+
+def stripe_secret_key() -> str | None:
+    # Clé secrète Stripe (sk_live_… en prod, sk_test_… en bac à sable).
+    return os.environ.get("STRIPE_SECRET_KEY")
+
+
+def stripe_price_id() -> str | None:
+    # ID du Price récurrent (abonnement Pro) — price_… dans le dashboard Stripe.
+    return os.environ.get("STRIPE_PRICE_ID")
+
+
+# URLs de redirection post-paiement / retour du portail. Benji étant une app de
+# bureau, on revient par un deep link (surchargeable pour le web/mobile).
+def billing_success_url() -> str:
+    return os.environ.get("BILLING_SUCCESS_URL", "benji://billing/success")
+
+
+def billing_cancel_url() -> str:
+    return os.environ.get("BILLING_CANCEL_URL", "benji://billing/cancel")
+
+
+def billing_portal_return_url() -> str:
+    return os.environ.get("BILLING_PORTAL_RETURN_URL", "benji://billing/portal")

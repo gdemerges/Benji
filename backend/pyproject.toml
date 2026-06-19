@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2",
     "websockets>=12",  # client streaming STT (Deepgram / Grok)
     "pyjwt>=2.8",      # jetons d'accès/refresh (HS256)
+    "stripe>=9",       # Checkout Session + Billing Portal (facturation)
 ]
 
 [dependency-groups]
