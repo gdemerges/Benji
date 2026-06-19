@@ -50,15 +50,11 @@ class BillingClient:
         return self._post("/v1/billing/portal")["portal_url"]
 
 
-def _client(cfg) -> BillingClient:
-    return BillingClient(cfg.backend_url, cfg.backend_token)
-
-
-def open_checkout(cfg) -> None:
+def open_checkout(base_url: str, token: str | None) -> None:
     """Ouvre la page de paiement Stripe dans le navigateur (peut bloquer/réseau)."""
-    webbrowser.open(_client(cfg).checkout_url())
+    webbrowser.open(BillingClient(base_url, token).checkout_url())
 
 
-def open_portal(cfg) -> None:
+def open_portal(base_url: str, token: str | None) -> None:
     """Ouvre le portail de gestion d'abonnement dans le navigateur."""
-    webbrowser.open(_client(cfg).portal_url())
+    webbrowser.open(BillingClient(base_url, token).portal_url())

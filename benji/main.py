@@ -60,6 +60,15 @@ def main():
     ui_config = UIConfig()
     llm_config = LLMConfig()
 
+    # Compte Benji : si une session est déjà enregistrée (login précédent), on
+    # utilise son access token pour les appels backend (STT/résumé distants,
+    # facturation). L'abonnement suit le compte, pas le poste.
+    from benji.account import build_session
+    session = build_session(llm_config.backend_url)
+    _account_token = session.access_token()
+    if _account_token:
+        llm_config.backend_token = _account_token
+
     stats = SessionStats()
     session_start = stats.session_start
 
@@ -240,7 +249,7 @@ def main():
 
     # Menu-bar tray icon (Quit / Show history / Show summary / Show window in .app mode)
     _show_main_cb = (lambda: controller.show_window()) if controller is not None else None
-    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb, llm_cfg=llm_config)  # noqa: F841 (keep ref)
+    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb, session=session, backend_url=llm_config.backend_url)  # noqa: F841 (keep ref)
 
     # Optional: rolling live summary
     live_summarizer = None

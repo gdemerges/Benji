@@ -1,0 +1,177 @@
+"""Compte Benji côté app : connexion/inscription + persistance des jetons.
+
+L'abonnement est lié au **compte** (email/mot de passe), pas au poste : se
+connecter avec les mêmes identifiants sur n'importe quelle plateforme retrouve
+le même plan — le backend rattache le plan à l'utilisateur (cf.
+docs/api-contract.md §1-2, docs/cloud-architecture.md).
+
+Les jetons sont stockés dans `~/.cache/benji/credentials.json` (chmod 600),
+même convention que l'historique. L'access token (15 min) est rafraîchi à la
+volée via le refresh token (30 j) tant que ce dernier est valide.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import time
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+_CRED_PATH = Path.home() / ".cache" / "benji" / "credentials.json"
+
+
+class AuthError(RuntimeError):
+    """Échec d'authentification (identifiants, réseau, backend)."""
+
+
+def _jwt_exp(token: str) -> int | None:
+    """Lit le champ `exp` d'un JWT sans vérifier la signature (info locale)."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)  # padding base64url
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        return int(data["exp"])
+    except Exception:
+        return None
+
+
+def _error_message(resp) -> str:
+    try:
+        return resp.json().get("error", {}).get("message") or f"HTTP {resp.status_code}"
+    except Exception:
+        return f"HTTP {resp.status_code}"
+
+
+class CredentialStore:
+    """Persistance locale des jetons (fichier privé 0600)."""
+
+    def __init__(self, path: Path = _CRED_PATH):
+        self._path = path
+
+    def load(self) -> dict | None:
+        if not self._path.exists():
+            return None
+        try:
+            return json.loads(self._path.read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def save(self, data: dict) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(data), encoding="utf-8")
+        self._path.chmod(0o600)
+
+    def clear(self) -> None:
+        self._path.unlink(missing_ok=True)
+
+
+class AuthClient:
+    """Appels HTTP vers /v1/auth/* et /v1/me (httpx, transport injectable)."""
+
+    def __init__(self, base_url: str, *, timeout: float = 30.0, transport=None):
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+        self._transport = transport
+
+    def _client(self):
+        import httpx
+        return httpx.Client(timeout=self._timeout, transport=self._transport)
+
+    def _post(self, path: str, payload: dict) -> dict:
+        import httpx
+        try:
+            with self._client() as c:
+                resp = c.post(f"{self._base_url}{path}", json=payload)
+        except httpx.HTTPError as e:
+            raise AuthError(f"Connexion au backend impossible : {e}") from e
+        if resp.status_code != 200:
+            raise AuthError(_error_message(resp))
+        return resp.json()
+
+    def register(self, email: str, password: str) -> dict:
+        return self._post("/v1/auth/register", {"email": email, "password": password})
+
+    def login(self, email: str, password: str) -> dict:
+        return self._post("/v1/auth/login", {"email": email, "password": password})
+
+    def refresh(self, refresh_token: str) -> dict:
+        return self._post("/v1/auth/refresh", {"refresh_token": refresh_token})
+
+    def me(self, access_token: str) -> dict:
+        import httpx
+        try:
+            with self._client() as c:
+                resp = c.get(
+                    f"{self._base_url}/v1/me",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+        except httpx.HTTPError as e:
+            raise AuthError(f"Connexion au backend impossible : {e}") from e
+        if resp.status_code != 200:
+            raise AuthError(_error_message(resp))
+        return resp.json()
+
+
+class Session:
+    """État de connexion : orchestre store + client, rafraîchit l'access token."""
+
+    _REFRESH_MARGIN_S = 60  # rafraîchit un peu avant l'expiration réelle
+
+    def __init__(self, client: AuthClient, store: CredentialStore | None = None):
+        self._client = client
+        self._store = store or CredentialStore()
+        self._creds = self._store.load()
+
+    @property
+    def is_authenticated(self) -> bool:
+        return bool(self._creds and self._creds.get("refresh_token"))
+
+    @property
+    def email(self) -> str | None:
+        return (self._creds or {}).get("email")
+
+    def login(self, email: str, password: str) -> None:
+        self._persist(email, self._client.login(email, password))
+
+    def register(self, email: str, password: str) -> None:
+        self._persist(email, self._client.register(email, password))
+
+    def logout(self) -> None:
+        self._creds = None
+        self._store.clear()
+
+    def access_token(self) -> str | None:
+        """Access token valide (rafraîchi si expiré/proche), ou None si déconnecté."""
+        if not self._creds:
+            return None
+        access = self._creds.get("access_token")
+        exp = _jwt_exp(access) if access else None
+        if access and exp and exp - time.time() > self._REFRESH_MARGIN_S:
+            return access
+        refresh = self._creds.get("refresh_token")
+        if not refresh:
+            return None
+        try:
+            tokens = self._client.refresh(refresh)
+        except AuthError:
+            # Refresh expiré/invalide → session morte, on nettoie.
+            log.info("Session expirée — reconnexion requise.")
+            self.logout()
+            return None
+        self._persist(self._creds.get("email"), tokens)
+        return self._creds.get("access_token")
+
+    def _persist(self, email: str | None, tokens: dict) -> None:
+        self._creds = {
+            "email": email,
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
+        }
+        self._store.save(self._creds)
+
+
+def build_session(base_url: str, store: CredentialStore | None = None) -> Session:
+    return Session(AuthClient(base_url), store=store)

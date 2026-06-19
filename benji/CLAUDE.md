@@ -6,4 +6,6 @@
 
 `history.py` + `stats.py` reçoivent chaque utterance finale pour persister l'historique et les métriques de session.
 
-`billing.py` — client Stripe côté app : appelle le backend authentifié (`/v1/billing/checkout`, `/v1/billing/portal`) et ouvre l'URL renvoyée dans le navigateur. Aucune clé Stripe sur le poste. Câblé au menu tray.
+`account.py` — compte Benji côté app : `Session` (login/register/refresh auto) + persistance des jetons dans `~/.cache/benji/credentials.json` (0600). L'abonnement suit le **compte**, pas le poste → mêmes identifiants = même plan sur toute plateforme. Au démarrage, `main.py` injecte l'access token dans `LLMConfig.backend_token`.
+
+`billing.py` — client Stripe côté app : appelle le backend authentifié (`/v1/billing/checkout`, `/v1/billing/portal`) et ouvre l'URL renvoyée dans le navigateur. Aucune clé Stripe sur le poste. Câblé au menu tray (token fourni par la `Session`).
