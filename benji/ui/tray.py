@@ -109,6 +109,7 @@ def build_tray(
     show_main_window=None,
     session=None,
     backend_url: str = "",
+    open_preferences=None,
 ) -> QSystemTrayIcon:
     """show_main_window: callable() — when present, adds an 'Afficher fenêtre' item
     that invokes this callback. The caller is expected to route through the
@@ -135,6 +136,11 @@ def build_tray(
     show_summary = QAction("Résumé en direct", menu)
     show_summary.triggered.connect(live_summary_window.show)
     menu.addAction(show_summary)
+
+    if open_preferences is not None:
+        prefs = QAction("Préférences…", menu)
+        prefs.triggered.connect(open_preferences)
+        menu.addAction(prefs)
 
     if session is not None:
         account = _Account(session, backend_url, tray, parent=tray)
