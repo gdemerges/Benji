@@ -76,17 +76,7 @@ class SubtitleOverlay(QWidget):
         self.label.setTextFormat(Qt.TextFormat.PlainText)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setWordWrap(True)
-        self.label.setFont(
-            QFont(self.config.font_family, self.config.font_size, QFont.Weight.Bold)
-        )
-        self.label.setStyleSheet(f"""
-            QLabel {{
-                color: white;
-                padding: 12px 24px;
-                background-color: rgba(0, 0, 0, {self.config.bg_opacity});
-                border-radius: 12px;
-            }}
-        """)
+        self._apply_label_style()
 
         # Layout with VAD indicator
         indicator_layout = QHBoxLayout()
@@ -139,6 +129,33 @@ class SubtitleOverlay(QWidget):
         """Handle window close event - cleanup before Qt destroys objects."""
         self.cleanup()
         event.accept()
+
+    def _apply_label_style(self):
+        """(Re)applique police + fond depuis self.config au label de sous-titres."""
+        self.label.setFont(
+            QFont(self.config.font_family, self.config.font_size, QFont.Weight.Bold)
+        )
+        self.label.setStyleSheet(f"""
+            QLabel {{
+                color: white;
+                padding: 12px 24px;
+                background-color: rgba(0, 0, 0, {self.config.bg_opacity});
+                border-radius: 12px;
+            }}
+        """)
+
+    def apply_config(self, config: UIConfig):
+        """Applique à chaud une nouvelle UIConfig (police, opacité, durée, position).
+
+        Appelé depuis le panneau Préférences pour les réglages « live » — pas de
+        redémarrage. `display_duration_ms`/`fade_duration_ms` sont lus au vol lors
+        des prochains démarrages de timer, donc réassigner self.config suffit.
+        """
+        if self._shutting_down:
+            return
+        self.config = config
+        self._apply_label_style()
+        self._position_window()
 
     def _position_window(self):
         screen = QApplication.primaryScreen()

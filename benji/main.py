@@ -60,6 +60,12 @@ def main():
     ui_config = UIConfig()
     llm_config = LLMConfig()
 
+    # Préférences utilisateur persistées (QSettings) : appliquées AVANT le
+    # chargement du modèle pour que langue/taille de modèle prennent effet.
+    from benji.settings import UserSettings
+    user_settings = UserSettings()
+    user_settings.hydrate(stt=stt_config, ui=ui_config)
+
     # Compte Benji : si une session est déjà enregistrée (login précédent), on
     # utilise son access token pour les appels backend (STT/résumé distants,
     # facturation). L'abonnement suit le compte, pas le poste.
@@ -247,9 +253,16 @@ def main():
         # Click sur overlay → revient à la fenêtre
         overlay._on_click = lambda: controller.show_window()
 
+    def _open_preferences():
+        from benji.ui.preferences_dialog import PreferencesDialog
+        PreferencesDialog(
+            stt_config, ui_config, user_settings,
+            on_live_change=overlay.apply_config,
+        ).exec()
+
     # Menu-bar tray icon (Quit / Show history / Show summary / Show window in .app mode)
     _show_main_cb = (lambda: controller.show_window()) if controller is not None else None
-    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb, session=session, backend_url=llm_config.backend_url)  # noqa: F841 (keep ref)
+    tray = build_tray(history_window, live_summary_window, show_main_window=_show_main_cb, session=session, backend_url=llm_config.backend_url, open_preferences=_open_preferences)  # noqa: F841 (keep ref)
 
     # Optional: rolling live summary
     live_summarizer = None
