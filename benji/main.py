@@ -232,6 +232,13 @@ def main():
     controller = None
     summary_worker = None
 
+    def _open_preferences():
+        from benji.ui.preferences_dialog import PreferencesDialog
+        PreferencesDialog(
+            stt_config, ui_config, user_settings,
+            on_live_change=overlay.apply_config,
+        ).exec()
+
     if mode == "window":
         summary_worker = SummaryWorker(provider=build_summary_provider(llm_config))
         summary_worker.start()
@@ -242,6 +249,9 @@ def main():
             session_start=session_start,
             summary_worker=summary_worker,
             on_minimize=lambda: controller.show_overlay() if controller else None,
+            on_open_preferences=_open_preferences,
+            session=session,
+            backend_url=llm_config.backend_url,
         )
 
         controller = WindowController(
@@ -252,13 +262,6 @@ def main():
 
         # Click sur overlay → revient à la fenêtre
         overlay._on_click = lambda: controller.show_window()
-
-    def _open_preferences():
-        from benji.ui.preferences_dialog import PreferencesDialog
-        PreferencesDialog(
-            stt_config, ui_config, user_settings,
-            on_live_change=overlay.apply_config,
-        ).exec()
 
     # Menu-bar tray icon (Quit / Show history / Show summary / Show window in .app mode)
     _show_main_cb = (lambda: controller.show_window()) if controller is not None else None

@@ -12,6 +12,8 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -20,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from benji.ui.account_controller import AccountController
 from benji.ui.live_tab import LiveTab
 from benji.ui.style import (
     FONT_UI,
@@ -28,7 +31,7 @@ from benji.ui.style import (
     install_theme_listener,
 )
 from benji.ui.summaries_tab import SummariesTab
-from benji.ui.widgets.icons import doc_text_icon, minimize_icon
+from benji.ui.widgets.icons import doc_text_icon, minimize_icon, person_icon, sliders_icon
 from benji.ui.widgets.segmented_control import SegmentedControl
 from benji.ui.widgets.status_pill import StatusPill
 
@@ -48,6 +51,9 @@ class MainWindow(QMainWindow):
         session_start: datetime,
         summary_worker,
         on_minimize=None,
+        on_open_preferences=None,
+        session=None,
+        backend_url: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -57,6 +63,15 @@ class MainWindow(QMainWindow):
         self._session_start = session_start
         self._worker = summary_worker
         self._on_minimize = on_minimize
+        self._on_open_preferences = on_open_preferences
+        # Contrôleur compte/facturation (login + abonnement Stripe) — présent
+        # seulement si une session est fournie. Succès/erreurs via QMessageBox.
+        self._account = None
+        if session is not None:
+            self._account = AccountController(session, backend_url, self._notify_account, parent=self)
+            self._account.failed.connect(
+                lambda msg: QMessageBox.warning(self, "Benji", f"Action impossible : {msg}")
+            )
         self._pending_summary_id: str | None = None
         self._has_unread_summary = False
         self._vibrancy_applied = False
@@ -93,6 +108,22 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+
+        # Compte / abonnement (modèle distant plus puissant) — icône seule + menu.
+        self.account_btn = QPushButton()
+        self.account_btn.setObjectName("icon_btn")
+        self.account_btn.setToolTip("Compte et abonnement")
+        self.account_btn.clicked.connect(self._open_account_menu)
+        if self._account is not None:
+            tb.addWidget(self.account_btn)
+
+        # Réglages (ouvre le panneau Préférences).
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("icon_btn")
+        self.settings_btn.setToolTip("Préférences")
+        self.settings_btn.clicked.connect(self._open_preferences)
+        if self._on_open_preferences is not None:
+            tb.addWidget(self.settings_btn)
 
         self.summarize_btn = QPushButton("Résumer")
         self.summarize_btn.setObjectName("summarize_btn")
@@ -210,6 +241,24 @@ class MainWindow(QMainWindow):
             }}
         """)
 
+        # Boutons icône seule (compte, réglages) : ghost, teinte label.
+        label_hex = f"#{label.red():02x}{label.green():02x}{label.blue():02x}"
+        icon_qss = f"""
+            QPushButton#icon_btn {{
+                background: transparent;
+                border: none;
+                padding: 6px;
+                border-radius: 6px;
+            }}
+            QPushButton#icon_btn:hover {{
+                background-color: rgba({hover.red()},{hover.green()},{hover.blue()},{hover.alpha()});
+            }}
+        """
+        self.account_btn.setIcon(person_icon(label_hex))
+        self.account_btn.setStyleSheet(icon_qss)
+        self.settings_btn.setIcon(sliders_icon(label_hex))
+        self.settings_btn.setStyleSheet(icon_qss)
+
     def _wire_worker(self) -> None:
         self._worker.started.connect(self._on_summary_started)
         self._worker.chunk.connect(self._on_summary_chunk)
@@ -274,6 +323,45 @@ class MainWindow(QMainWindow):
     def _minimize(self) -> None:
         if self._on_minimize is not None:
             self._on_minimize()
+
+    def _open_preferences(self) -> None:
+        if self._on_open_preferences is not None:
+            self._on_open_preferences()
+
+    def _notify_account(self, title: str, msg: str) -> None:
+        QMessageBox.information(self, f"Benji — {title}", msg)
+
+    def _build_account_menu(self) -> QMenu | None:
+        """Menu compte selon l'état de session (None si pas de compte câblé).
+
+        L'abonnement Pro débloque le modèle de transcription/résumé distant, plus
+        puissant (cf. STTConfig.stt_provider = "remote")."""
+        if self._account is None:
+            return None
+        menu = QMenu(self)
+        session = self._account.session
+        if session.is_authenticated:
+            email = menu.addAction(session.email or "Connecté")
+            email.setEnabled(False)
+            menu.addSeparator()
+            menu.addAction("Passer Pro — modèle distant…", self._account.open_checkout)
+            menu.addAction("Gérer l'abonnement…", self._account.open_portal)
+            menu.addSeparator()
+            menu.addAction("Se déconnecter", self._account.logout)
+        else:
+            menu.addAction(
+                "Se connecter / créer un compte…",
+                lambda: self._account.login(parent=self),
+            )
+        return menu
+
+    def _open_account_menu(self) -> None:
+        """Reconstruit le menu à l'ouverture et le pose sous le bouton compte."""
+        menu = self._build_account_menu()
+        if menu is None:
+            return
+        pos = self.account_btn.mapToGlobal(self.account_btn.rect().bottomLeft())
+        menu.exec(pos)
 
     def _restore_state(self) -> None:
         s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
