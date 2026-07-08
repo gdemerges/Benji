@@ -1,6 +1,6 @@
 [project]
 name = "benji"
-version = "0.1.0"
+dynamic = ["version"]  # source of truth: benji/__init__.py:__version__
 description = "macOS real-time transcription overlay (mic → VAD → STT → subtitles)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -49,6 +49,9 @@ benji = "benji.main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "benji/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["benji"]

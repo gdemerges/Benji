@@ -233,7 +233,6 @@ wheels = [
 
 [[package]]
 name = "benji"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "faster-whisper" },
@@ -284,7 +283,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'diarization'", specifier = ">=2.2.0" },
     { name = "websockets", marker = "extra == 'cloud'", specifier = ">=12" },
 ]
-provides-extras = ["diarization", "cloud"]
+provides-extras = ["cloud", "diarization"]
 
 [package.metadata.requires-dev]
 dev = [

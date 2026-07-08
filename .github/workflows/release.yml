@@ -1,0 +1,75 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` and push it to cut a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Builds the macOS .app, packages a DMG, signs+notarizes it when the Apple
+# secrets are configured (otherwise ships an unsigned DMG), and publishes it
+# to a GitHub Release. The public download link is then:
+#   https://github.com/<owner>/Benji/releases/latest/download/Benji.dmg
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # create the GitHub Release + upload assets
+
+jobs:
+  build-macos:
+    runs-on: macos-14  # Apple Silicon — matches the mlx target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build .app
+        run: uv run --with pyinstaller pyinstaller --noconfirm packaging/benji.spec
+
+      # Import the Developer ID cert into a throwaway keychain. Skipped when the
+      # secret is absent, so the workflow still produces an unsigned DMG.
+      # `secrets` can't be used in `if:` directly — map to env, then test env.
+      - name: Import signing certificate
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PWD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+
+      - name: Sign, notarize & package
+        env:
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: ./packaging/sign_and_notarize.sh
+
+      # sign_and_notarize.sh builds the DMG only when signing; make sure an
+      # (unsigned) DMG exists in the no-secrets path too.
+      - name: Ensure DMG exists
+        run: '[ -f dist/Benji.dmg ] || ./packaging/make_dmg.sh'
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Benji.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
