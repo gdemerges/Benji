@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -10,7 +11,18 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication, QPalette
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from benji.config import IS_MACOS
+
 log = logging.getLogger(__name__)
+
+
+def vibrancy_enabled() -> bool:
+    """Vibrancy macOS native : opt-in via BENJI_VIBRANCY (1/true/yes).
+
+    Désactivée par défaut — le swap de contentView NSVisualEffectView doit être
+    validé en live (grab() ne capture pas la composition native), et le fallback
+    dégradé plat reste sûr sur toutes les versions de Qt."""
+    return os.environ.get("BENJI_VIBRANCY", "").lower() in ("1", "true", "yes")
 
 
 @dataclass(frozen=True)
@@ -109,12 +121,47 @@ FONT_DISPLAY = '"-apple-system", "SF Pro Display", "SF Pro Text", system-ui, san
 FONT_MONO = '"SF Mono", Menlo, monospace'
 
 
-def apply_window_vibrancy(window: QWidget) -> None:
+def apply_window_vibrancy(window: QWidget) -> bool:
     """macOS vibrancy via NSVisualEffectView en remplaçant la contentView.
 
-    Le pattern naïf (addSubview sur la contentView Qt) casse le rendu Qt.
-    On utilise donc le pattern "wrap" : on remplace la contentView de la NSWindow
-    par un NSVisualEffectView, et on rattache l'ancienne (Qt) comme subview.
-    Désactivé pour l'instant — laisse le fallback flat tant qu'on n'a pas
-    validé le swap sur toutes les versions de Qt."""
-    return  # no-op : fallback flat (cf. _apply_theme côté MainWindow)
+    Pattern "wrap" : la contentView Qt de la NSWindow est remplacée par un
+    NSVisualEffectView (flou behind-window), l'ancienne vue Qt étant rattachée
+    comme subview redimensionnable. Le fond Qt doit être transparent pour laisser
+    voir le flou (cf. `_apply_theme` qui teste `_vibrancy_active`).
+
+    Renvoie True si le swap a réussi. No-op + False si désactivé (BENJI_VIBRANCY),
+    hors macOS, ou si AppKit échoue — l'appelant retombe alors sur le dégradé plat.
+    """
+    if not IS_MACOS or not vibrancy_enabled():
+        return False
+    try:
+        import objc
+        from AppKit import (
+            NSViewHeightSizable,
+            NSViewWidthSizable,
+            NSVisualEffectView,
+        )
+
+        nsview = objc.objc_object(c_void_p=int(window.winId()))
+        nswindow = nsview.window()
+        if nswindow is None:
+            return False
+
+        effect = NSVisualEffectView.alloc().init()
+        effect.setFrame_(nsview.bounds())
+        effect.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        # BlendingModeBehindWindow=0, StateActive=1, Material UnderWindowBackground=21
+        effect.setBlendingMode_(0)
+        effect.setState_(1)
+        try:
+            effect.setMaterial_(21)
+        except Exception:
+            pass  # matériau indispo sur cette version : garde le défaut
+
+        content = nswindow.contentView()
+        nswindow.setContentView_(effect)
+        effect.addSubview_(content)
+        return True
+    except Exception as e:
+        log.warning("Vibrancy indisponible, fallback flat : %s", e)
+        return False
