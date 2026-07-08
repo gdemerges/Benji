@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import QFileSystemWatcher, QSize, Qt
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -168,7 +168,7 @@ class SummariesTab(QWidget):
         path = self._selected_path()
         if path and not path.startswith(_PENDING_PREFIX) and not path.startswith(_HEADER_PREFIX):
             try:
-                self.preview.setMarkdown(Path(path).read_text(encoding="utf-8"))
+                self._render_markdown(Path(path).read_text(encoding="utf-8"))
             except Exception:
                 pass
 
@@ -256,6 +256,27 @@ class SummariesTab(QWidget):
             pass
         return ""
 
+    # Marges (haut, bas) en px injectées par niveau de titre. QTextBrowser.setMarkdown
+    # ignore les marges CSS des titres — on les pose donc directement sur les
+    # QTextBlockFormat après rendu, sinon H2/H3 collent au texte précédent.
+    _HEADING_MARGINS = {1: (2, 12), 2: (22, 8), 3: (16, 6)}
+
+    def _render_markdown(self, text: str) -> None:
+        """setMarkdown + espacement des titres (contourne l'ignorance des marges CSS)."""
+        self.preview.setMarkdown(text)
+        doc = self.preview.document()
+        block = doc.begin()
+        while block.isValid():
+            level = block.blockFormat().headingLevel()
+            if level in self._HEADING_MARGINS:
+                top, bottom = self._HEADING_MARGINS[level]
+                fmt = block.blockFormat()
+                fmt.setTopMargin(top)
+                fmt.setBottomMargin(bottom)
+                cursor = QTextCursor(block)
+                cursor.setBlockFormat(fmt)
+            block = block.next()
+
     def _selected_path(self) -> str | None:
         item = self.list_widget.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
@@ -275,7 +296,7 @@ class SummariesTab(QWidget):
             return
         try:
             text = Path(path).read_text(encoding="utf-8")
-            self.preview.setMarkdown(text)
+            self._render_markdown(text)
         except Exception as e:
             self.preview.setPlainText(f"Erreur de lecture : {e}")
 
@@ -317,7 +338,7 @@ class SummariesTab(QWidget):
         if summary_id not in self._pending_items:
             return
         self._pending_text += chunk
-        self.preview.setMarkdown(self._pending_text)
+        self._render_markdown(self._pending_text)
 
     def finalize_pending(self, summary_id: str, path) -> None:
         item = self._pending_items.pop(summary_id, None)

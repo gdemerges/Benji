@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._pending_summary_id: str | None = None
         self._has_unread_summary = False
         self._vibrancy_applied = False
+        self._vibrancy_active = False
 
         self._build_ui()
         self._wire_worker()
@@ -74,8 +75,11 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         if not self._vibrancy_applied:
-            apply_window_vibrancy(self)
+            self._vibrancy_active = apply_window_vibrancy(self)
             self._vibrancy_applied = True
+            if self._vibrancy_active:
+                # Fond transparent pour laisser voir le flou natif derrière.
+                self._apply_theme()
 
     def _build_ui(self) -> None:
         # === Toolbar ===
@@ -138,14 +142,21 @@ class MainWindow(QMainWindow):
         delta = 6 if t.is_dark else 5
         top = bg.lighter(100 + delta)
         bottom = bg.darker(100 + delta)
-        self.setStyleSheet(f"""
+        # Vibrancy active : fond transparent pour laisser passer le flou natif.
+        # Sinon : dégradé plat (fallback sûr, toutes versions de Qt).
+        if self._vibrancy_active:
+            window_bg = "QMainWindow { background: transparent; }"
+        else:
+            window_bg = f"""
             QMainWindow {{
                 background-color: qlineargradient(
                     x1:0, y1:0, x2:0, y2:1,
                     stop:0 rgb({top.red()},{top.green()},{top.blue()}),
                     stop:1 rgb({bottom.red()},{bottom.green()},{bottom.blue()})
                 );
-            }}
+            }}"""
+        self.setStyleSheet(f"""
+            {window_bg}
             QToolBar {{ background: transparent; border: none; padding: 8px 12px; spacing: 8px; }}
         """)
         self.status_pill.apply_theme()

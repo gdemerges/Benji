@@ -9,7 +9,14 @@ from PyQt6.QtCore import (
     pyqtSlot,
 )
 from PyQt6.QtGui import QColor, QFont, QPainter
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from benji.config import IS_MACOS, IS_WINDOWS, UIConfig
 from benji.ui.style import speaker_color
@@ -78,16 +85,25 @@ class SubtitleOverlay(QWidget):
         self.label.setWordWrap(True)
         self._apply_label_style()
 
+        # Ombre portée douce : donne au bloc sous-titres un rendu « carte
+        # flottante » et le détache d'un fond clair. Les marges du layout
+        # ci-dessous réservent la place pour que le flou ne soit pas rogné.
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 3)
+        self.label.setGraphicsEffect(shadow)
+
         # Layout with VAD indicator
         indicator_layout = QHBoxLayout()
         indicator_layout.addStretch()
         indicator_layout.addWidget(self.vad_indicator)
-        indicator_layout.setContentsMargins(8, 8, 8, 0)
+        indicator_layout.setContentsMargins(8, 8, 20, 0)
 
         main_layout = QVBoxLayout()
         main_layout.addLayout(indicator_layout)
         main_layout.addWidget(self.label)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(20, 0, 20, 18)
         main_layout.setSpacing(4)
         self.setLayout(main_layout)
 
