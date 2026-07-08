@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from benji.config import IS_MACOS, IS_WINDOWS, UIConfig
+from benji.ui.style import speaker_color
 
 log = logging.getLogger(__name__)
 
@@ -356,6 +357,7 @@ class SubtitleOverlay(QWidget):
                 # Add new word
                 self.current_text.append(message["text"])
                 full_text = " ".join(self.current_text)
+                self.label.setTextFormat(Qt.TextFormat.PlainText)
                 self.label.setText(full_text)
                 self._reposition()
                 # Reset fade timer only when actual words arrive, not on segment_start
@@ -375,7 +377,20 @@ class SubtitleOverlay(QWidget):
                     return
                 text = message.get("text") or ""
                 self.current_text = text.split() if text else []
-                self.label.setText(text)
+                speaker = message.get("speaker")
+                if speaker:
+                    # Colored speaker prefix; escape the body so stray <,&,> in the
+                    # transcription aren't interpreted as markup.
+                    from html import escape
+                    c = speaker_color(speaker)
+                    self.label.setTextFormat(Qt.TextFormat.RichText)
+                    self.label.setText(
+                        f'<span style="color:{c.name()};font-weight:bold;">{escape(speaker)}</span> '
+                        f"{escape(text)}"
+                    )
+                else:
+                    self.label.setTextFormat(Qt.TextFormat.PlainText)
+                    self.label.setText(text)
                 self._reposition()
                 self.fade_anim.stop()
                 self.setWindowOpacity(1.0)

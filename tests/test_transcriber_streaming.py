@@ -49,6 +49,7 @@ def _audio(seconds: float) -> np.ndarray:
 def _make(monkeypatch, scripts, **cfg) -> tuple[Transcriber, FakeBackend]:
     backend = FakeBackend(scripts)
     monkeypatch.setattr(transcriber_mod, "build_backend", lambda **kw: backend)
+    cfg.setdefault("diarization", False)  # streaming tests drive the tagger explicitly
     t = Transcriber(Queue(), Queue(), STTConfig(**cfg), stats=None, sample_rate=SR)
     return t, backend
 
@@ -146,7 +147,7 @@ def test_final_segment_postprocesses_and_resets(monkeypatch):
         [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)],
     ])
     saved: list[str] = []
-    monkeypatch.setattr(t.history, "add", lambda text: saved.append(text))
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: saved.append(text))
 
     # Pretend we were mid-stream so we can prove the reset.
     t._committed_words = [{"text": "stale", "start": 0.0, "end": 0.1}]
@@ -164,6 +165,36 @@ def test_final_segment_postprocesses_and_resets(monkeypatch):
     assert t._committed_words == []
     assert t._committed_samples == 0
     assert t._prev_tail_texts == []
+
+
+def test_final_segment_attaches_speaker_as_structured_field(monkeypatch):
+    # With diarization on, the speaker label travels as a separate `speaker`
+    # field — it is NOT glued into the text — and is persisted alongside.
+    t, _ = _make(monkeypatch, [
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)],
+    ])
+    saved: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: saved.append((text, speaker)))
+    t.tagger = type("T", (), {"label": lambda self, a, sr: "B"})()
+
+    t._run_segment(_audio(1.0), is_final=True)
+
+    final = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"][0]
+    assert final["text"] == "Bonjour le monde"  # text stays clean, no "B: " prefix
+    assert final["speaker"] == "B"
+    assert saved == [("Bonjour le monde", "B")]
+
+
+def test_final_segment_omits_speaker_when_diarization_off(monkeypatch):
+    # No tagger → no `speaker` key on the message at all.
+    t, _ = _make(monkeypatch, [[("bonjour", 0.0, 0.4)]])
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+    assert t.tagger is None
+
+    t._run_segment(_audio(1.0), is_final=True)
+
+    final = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"][0]
+    assert "speaker" not in final
 
 
 def test_final_segment_drops_hallucination(monkeypatch):

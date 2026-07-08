@@ -243,11 +243,9 @@ class Transcriber:
             self._reset_partial_state()
             return
 
-        # Speaker label (best-effort, pitch-based)
-        if self.tagger is not None:
-            label = self.tagger.label(audio, self.sample_rate)
-            if label:
-                full_text = f"{label}: {full_text}"
+        # Speaker label (best-effort). Kept as a structured field — never glued
+        # into the text — so the UI can colorize it per speaker.
+        speaker = self.tagger.label(audio, self.sample_rate) if self.tagger is not None else None
 
         # Optional LLM correction (synchronous; only if enabled)
         if self.config.llm_correction:
@@ -258,10 +256,13 @@ class Transcriber:
                 log.warning("LLM correction skipped: %s", e)
 
         # Replace the streamed (raw) overlay text with the post-processed/corrected one.
-        self.display_queue.put({"type": "final_text", "text": full_text})
+        msg = {"type": "final_text", "text": full_text}
+        if speaker:
+            msg["speaker"] = speaker
+        self.display_queue.put(msg)
 
-        log.info('"%s"', full_text)
-        self.history.add(full_text)
+        log.info('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
+        self.history.add(full_text, speaker=speaker)
 
         # Update sliding context from the raw (pre-label) words
         for w in words[-self.config.context_words:]:

@@ -11,12 +11,14 @@ class TranscriptionHistory:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.history_file = cache_dir / "history.jsonl"
 
-    def add(self, text: str):
-        """Add a transcription to history."""
+    def add(self, text: str, speaker: str | None = None):
+        """Add a transcription to history (optionally tagged with a speaker)."""
         entry = {
             "timestamp": datetime.now().isoformat(),
             "text": text,
         }
+        if speaker:
+            entry["speaker"] = speaker
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         os.chmod(self.history_file, 0o600)

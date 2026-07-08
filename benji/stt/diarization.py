@@ -108,19 +108,21 @@ class PyannoteSpeakerTagger:
         model_id: str = "pyannote/embedding",
     ):
         try:
-            from pyannote.audio import Inference
+            from pyannote.audio import Inference, Model
         except ImportError as e:
             raise RuntimeError(
                 "pyannote.audio is required for diarization_backend='pyannote'. "
-                "Install with: pip install pyannote.audio"
+                "Install with: uv sync --extra diarization"
             ) from e
 
         token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
         if not token:
             log.warning("No HF_TOKEN set — pyannote model download may fail")
 
+        # pyannote 4.x: load the Model (auth via `token`) then wrap it in Inference.
         # `whole` averages embeddings across the full clip — what we want per segment.
-        self._inference = Inference(model_id, window="whole", use_auth_token=token)
+        model = Model.from_pretrained(model_id, token=token)
+        self._inference = Inference(model, window="whole")
         self.max_speakers = max_speakers
         self.cosine_threshold = cosine_threshold
         self._centroids: dict[str, np.ndarray] = {}
