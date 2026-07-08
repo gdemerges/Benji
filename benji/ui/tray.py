@@ -1,11 +1,12 @@
 """Menu-bar tray icon: Quit / Show History / account & Stripe billing."""
 
 import logging
-import threading
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+from benji.ui.account_controller import AccountController
 
 log = logging.getLogger(__name__)
 
@@ -23,62 +24,7 @@ def _make_icon() -> QIcon:
     return QIcon(pix)
 
 
-class _Account(QObject):
-    """Pilote compte + facturation depuis le tray.
-
-    Login : modal, sur le thread Qt. Facturation : réseau hors thread Qt
-    (la résolution du token peut elle aussi rafraîchir → off-thread), erreurs
-    remontées par signal vers le thread principal (`failed`).
-    """
-
-    failed = pyqtSignal(str)
-
-    def __init__(self, session, base_url: str, tray, parent=None):
-        super().__init__(parent)
-        self._session = session
-        self._base_url = base_url
-        self._tray = tray
-
-    @property
-    def session(self):
-        return self._session
-
-    def login(self) -> None:
-        from benji.ui.login_dialog import LoginDialog
-        if LoginDialog(self._session).exec():
-            self._notify("Connecté", f"Compte : {self._session.email}")
-
-    def logout(self) -> None:
-        self._session.logout()
-        self._notify("Déconnecté", "Tu peux te reconnecter à tout moment.")
-
-    def open_checkout(self) -> None:
-        from benji import billing
-        self._run(lambda token: billing.open_checkout(self._base_url, token))
-
-    def open_portal(self) -> None:
-        from benji import billing
-        self._run(lambda token: billing.open_portal(self._base_url, token))
-
-    def _run(self, fn) -> None:
-        def worker():
-            try:
-                token = self._session.access_token()
-                if not token:
-                    raise RuntimeError("Session expirée — reconnecte-toi.")
-                fn(token)
-            except Exception as e:  # réseau, 401/402, backend down…
-                log.warning("Facturation: %s", e)
-                self.failed.emit(str(e))
-
-        threading.Thread(target=worker, daemon=True, name="benji-billing").start()
-
-    def _notify(self, title: str, msg: str) -> None:
-        self._tray.showMessage(f"Benji — {title}", msg,
-                               QSystemTrayIcon.MessageIcon.Information)
-
-
-def _build_account_section(menu: QMenu, account: _Account) -> None:
+def _build_account_section(menu: QMenu, account: AccountController) -> None:
     """(Re)peuple la section compte du menu selon l'état de connexion."""
     menu.addSeparator()
     if account.session.is_authenticated:
@@ -99,7 +45,9 @@ def _build_account_section(menu: QMenu, account: _Account) -> None:
         menu.addAction(logout)
     else:
         login = QAction("Se connecter…", menu)
-        login.triggered.connect(account.login)
+        # lambda : QAction.triggered émet un bool `checked` qu'on ne veut pas
+        # voir arriver dans le paramètre `parent` de login().
+        login.triggered.connect(lambda: account.login())
         menu.addAction(login)
 
 
@@ -143,7 +91,11 @@ def build_tray(
         menu.addAction(prefs)
 
     if session is not None:
-        account = _Account(session, backend_url, tray, parent=tray)
+        def _notify(title: str, msg: str) -> None:
+            tray.showMessage(f"Benji — {title}", msg,
+                             QSystemTrayIcon.MessageIcon.Information)
+
+        account = AccountController(session, backend_url, _notify, parent=tray)
         account.failed.connect(
             lambda msg: tray.showMessage(
                 "Benji — abonnement",

@@ -38,6 +38,25 @@ _FOLDER_ARROW = """
 """
 
 
+_SLIDERS = """
+<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+  <path d='M4 7h9M19 7h1M4 12h1M11 12h9M4 17h9M19 17h1'
+        stroke='COLOR' stroke-width='1.6' stroke-linecap='round'/>
+  <circle cx='16' cy='7' r='2.1' fill='none' stroke='COLOR' stroke-width='1.6'/>
+  <circle cx='8' cy='12' r='2.1' fill='none' stroke='COLOR' stroke-width='1.6'/>
+  <circle cx='16' cy='17' r='2.1' fill='none' stroke='COLOR' stroke-width='1.6'/>
+</svg>
+"""
+
+_PERSON = """
+<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+  <circle cx='12' cy='8' r='3.5' fill='none' stroke='COLOR' stroke-width='1.6'/>
+  <path d='M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7'
+        fill='none' stroke='COLOR' stroke-width='1.6' stroke-linecap='round'/>
+</svg>
+"""
+
+
 def _render(svg: str, color_hex: str, size: int = 18) -> QIcon:
     data = svg.replace("COLOR", color_hex).encode("utf-8")
     renderer = QSvgRenderer(QByteArray(data))
@@ -63,3 +82,11 @@ def clipboard_icon(color_hex: str) -> QIcon:
 
 def folder_arrow_icon(color_hex: str) -> QIcon:
     return _render(_FOLDER_ARROW, color_hex)
+
+
+def sliders_icon(color_hex: str) -> QIcon:
+    return _render(_SLIDERS, color_hex)
+
+
+def person_icon(color_hex: str) -> QIcon:
+    return _render(_PERSON, color_hex)
