@@ -10,7 +10,7 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 
 | Endpoint | État |
 |---|---|
-| `POST /v1/auth/register` · `login` · `refresh` | **réel** — comptes SQLite, mot de passe PBKDF2, jetons JWT (HS256) |
+| `POST /v1/auth/register` · `login` · `refresh` | **réel** — comptes SQLite, mot de passe PBKDF2, jetons JWT (HS256). Refresh **rotatif** (jti persisté, révocation + détection de réutilisation) et endpoints **rate-limités** par IP |
 | `GET /v1/me` | **réel** — plan, droits (`free`/`pro`), quota STT depuis le métering |
 | `POST /v1/summary` (SSE) | **réel** — streame Claude (alias `haiku`/`sonnet`/`opus`), gated `cloud_summary` |
 | `WS /v1/transcribe` | **réel** — STT (Deepgram/Grok) + auth + **quota** + métering. `STT_BACKEND=fake` hors-ligne. Validation live à faire. |
@@ -28,6 +28,8 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 | `JWT_SECRET` | secret de signature JWT (**obligatoire en prod**) |
 | `BENJI_DB_PATH` | chemin SQLite (défaut `benji.db`) |
 | `STRIPE_WEBHOOK_SECRET` | vérification des webhooks Stripe (sinon non vérifié, dev only) |
+| `AUTH_RATE_LIMIT_MAX` | tentatives d'auth autorisées par fenêtre (défaut `10`) |
+| `AUTH_RATE_LIMIT_WINDOW` | durée de la fenêtre de rate-limit en secondes (défaut `60`) |
 
 ## Lancer
 

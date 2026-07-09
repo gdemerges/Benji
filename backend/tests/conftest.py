@@ -4,6 +4,16 @@ from app.main import app
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Vide les limiteurs entre tests : l'IP TestClient est partagée, sinon les
+    tentatives s'accumulent d'un test à l'autre."""
+    from app.ratelimit import reset_all_limiters
+    reset_all_limiters()
+    yield
+    reset_all_limiters()
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """TestClient avec une DB SQLite temporaire isolée par test."""
