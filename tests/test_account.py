@@ -22,7 +22,9 @@ def _transport(handler):
 
 
 def _store(tmp_path):
-    return CredentialStore(tmp_path / "creds.json")
+    # use_keyring=False : les tests restent hermétiques (fichier temporaire),
+    # sans toucher au trousseau système réel.
+    return CredentialStore(tmp_path / "creds.json", use_keyring=False)
 
 
 def test_login_persists_tokens(tmp_path):

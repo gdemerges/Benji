@@ -1,7 +1,8 @@
 import logging
+import threading
 import time
 from collections import deque
-from queue import Queue
+from queue import Full, Queue
 
 import numpy as np
 
@@ -42,6 +43,14 @@ class Transcriber:
         self._committed_words: list[dict] = []
         self._committed_samples: int = 0
         self._prev_tail_texts: list[str] = []
+
+        # Async LLM correction: raw finals are shown immediately, then corrected
+        # off-thread (see _corrector_loop) so the STT loop never blocks on the LLM.
+        # Each final carries a monotonic seq so the overlay can replace the right
+        # segment (and ignore a correction whose segment is no longer on screen).
+        self._segment_seq: int = 0
+        self._correction_queue: Queue | None = None
+        self._corrector_thread: threading.Thread | None = None
 
         # Optional diarization (pitch or pyannote)
         self.tagger = (
@@ -247,22 +256,18 @@ class Transcriber:
         # into the text — so the UI can colorize it per speaker.
         speaker = self.tagger.label(audio, self.sample_rate) if self.tagger is not None else None
 
-        # Optional LLM correction (synchronous; only if enabled)
         if self.config.llm_correction:
-            try:
-                from benji.llm.corrector import correct
-                full_text = correct(full_text, language=self.config.language)
-            except Exception as e:
-                log.warning("LLM correction skipped: %s", e)
-
-        # Replace the streamed (raw) overlay text with the post-processed/corrected one.
-        msg = {"type": "final_text", "text": full_text}
-        if speaker:
-            msg["speaker"] = speaker
-        self.display_queue.put(msg)
-
-        log.info('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
-        self.history.add(full_text, speaker=speaker)
+            # Show the raw transcription immediately, then correct it off-thread
+            # and emit a replacement once ready — the STT loop never blocks on the
+            # LLM. History is written by the corrector (stores the corrected text).
+            self._segment_seq += 1
+            self._emit_final(full_text, speaker, seq=self._segment_seq)
+            self._enqueue_correction(full_text, speaker, self._segment_seq)
+        else:
+            # Replace the streamed (raw) overlay text with the post-processed one.
+            self._emit_final(full_text, speaker)
+            log.info('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
+            self.history.add(full_text, speaker=speaker)
 
         # Update sliding context from the raw (pre-label) words
         for w in words[-self.config.context_words:]:
@@ -276,6 +281,64 @@ class Transcriber:
 
         # Final closes the segment — partial state resets for the next utterance.
         self._reset_partial_state()
+
+    def _emit_final(self, text: str, speaker: str | None, *, seq: int | None = None,
+                    corrected: bool = False) -> None:
+        """Push a final_text message to the overlay.
+
+        `seq` tags the segment so an async correction can be matched back to it;
+        `corrected` marks the replacement so the overlay only applies it while the
+        same segment is still displayed.
+        """
+        msg: dict = {"type": "final_text", "text": text}
+        if speaker:
+            msg["speaker"] = speaker
+        if seq is not None:
+            msg["seq"] = seq
+        if corrected:
+            msg["corrected"] = True
+        self.display_queue.put(msg)
+
+    def _ensure_corrector(self) -> None:
+        if self._corrector_thread is not None and self._corrector_thread.is_alive():
+            return
+        self._correction_queue = Queue(maxsize=8)
+        self._corrector_thread = threading.Thread(
+            target=self._corrector_loop, daemon=True, name="STT-corrector"
+        )
+        self._corrector_thread.start()
+
+    def _enqueue_correction(self, text: str, speaker: str | None, seq: int) -> None:
+        self._ensure_corrector()
+        try:
+            self._correction_queue.put_nowait((seq, text, speaker))
+        except Full:
+            # Corrector saturated: keep the raw text (already displayed) and
+            # persist it now so history has exactly one entry for this segment.
+            log.warning("LLM corrector saturated; kept raw text")
+            self.history.add(text, speaker=speaker)
+
+    def _corrector_loop(self) -> None:
+        """Background worker: correct queued finals and emit replacements.
+
+        Persists the corrected (or unchanged) text to history so there is exactly
+        one entry per segment — the STT loop deliberately skips history.add when
+        correction is enabled.
+        """
+        from benji.llm.corrector import correct
+        while True:
+            item = self._correction_queue.get()
+            if item is None:
+                break
+            seq, text, speaker = item
+            try:
+                corrected = correct(text, language=self.config.language)
+            except Exception as e:
+                log.warning("LLM correction skipped: %s", e)
+                corrected = text
+            self.history.add(corrected, speaker=speaker)
+            log.info('%s"%s"', f"[{speaker}] " if speaker else "", corrected)
+            self._emit_final(corrected, speaker, seq=seq, corrected=True)
 
     def run(self):
         log.info("Transcription started (incremental streaming)")

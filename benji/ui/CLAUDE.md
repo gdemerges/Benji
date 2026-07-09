@@ -1,6 +1,6 @@
 # benji/ui/
 
-- `overlay.py` — fenêtre sous-titres always-on-top, click-through sur macOS via `NSWindow` level. Poll `display_queue` via `QTimer` — ne doit jamais bloquer la boucle Qt.
+- `overlay.py` — fenêtre sous-titres always-on-top, click-through sur macOS via `NSWindow` level. Consomme les events via le signal `DisplayBus.event` (le `DisplayBus` draine `display_queue` avec un `QTimer` central) — ne doit jamais bloquer la boucle Qt. Sticky-across-Spaces réasserté sur `NSWorkspaceActiveSpaceDidChangeNotification` (+ timer de secours 2 s). Multi-écrans : suit l'écran sous le curseur (`UIConfig.follow_active_screen`), réévalué à chaque `segment_start`.
 - `main_window.py` — fenêtre principale (toolbar + 2 onglets Live/Résumés), style macOS natif (vibrancy + palette adaptive).
 - `live_tab.py` — onglet Live : `QScrollArea` avec `ChatItem` widgets + `PartialBubble` flottant.
 - `summaries_tab.py` — onglet Résumés : liste groupée par jour + preview markdown stylée.

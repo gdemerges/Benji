@@ -23,6 +23,41 @@ from benji.ui.style import speaker_color
 
 log = logging.getLogger(__name__)
 
+_space_observer_cls = None
+
+
+def _space_observer_class():
+    """Lazily build (once) an NSObject subclass that forwards NSWorkspace
+    active-space-change notifications to a Python callback.
+
+    Defined lazily so this module still imports on non-macOS platforms (where
+    Foundation isn't available). An Objective-C notification target must be a
+    real NSObject subclass — a plain Python object is silently never called,
+    which is exactly the bug this replaces.
+    """
+    global _space_observer_cls
+    if _space_observer_cls is not None:
+        return _space_observer_cls
+    import objc
+    from Foundation import NSObject
+
+    class _SpaceObserver(NSObject):
+        def initWithCallback_(self, cb):
+            self = objc.super(_SpaceObserver, self).init()
+            if self is None:
+                return None
+            self._cb = cb
+            return self
+
+        def spaceDidChange_(self, _notification):
+            try:
+                self._cb()
+            except Exception:
+                log.exception("Space-change reassert failed")
+
+    _space_observer_cls = _SpaceObserver
+    return _space_observer_cls
+
 
 class VADIndicator(QWidget):
     """Visual indicator for VAD status (speaking/silent)."""
@@ -64,6 +99,10 @@ class SubtitleOverlay(QWidget):
         self.config = config or UIConfig()
         self.current_text = []  # For streaming mode
         self._shutting_down = False  # Flag to prevent operations during shutdown
+        self._current_screen = None  # Screen the overlay is currently anchored to
+        # Seq of the on-screen final segment awaiting an async LLM correction.
+        # A late correction only replaces the text if this still matches.
+        self._pending_correction_seq = None
 
         # Window flags (cross-platform)
         self.setWindowFlags(
@@ -173,10 +212,25 @@ class SubtitleOverlay(QWidget):
         self._apply_label_style()
         self._position_window()
 
+    def _target_screen(self):
+        """Screen to anchor the overlay on.
+
+        Multi-monitor: follow the screen under the cursor (the user's active
+        display) when `follow_active_screen` is set; otherwise the primary.
+        Falls back to primary if the cursor screen can't be resolved.
+        """
+        if getattr(self.config, "follow_active_screen", True):
+            from PyQt6.QtGui import QCursor
+            screen = QApplication.screenAt(QCursor.pos())
+            if screen is not None:
+                return screen
+        return QApplication.primaryScreen()
+
     def _position_window(self):
-        screen = QApplication.primaryScreen()
+        screen = self._target_screen()
         if not screen:
             return
+        self._current_screen = screen
         geom = screen.availableGeometry()
         width = int(geom.width() * self.config.window_width_ratio)
         x = geom.x() + (geom.width() - width) // 2
@@ -187,8 +241,13 @@ class SubtitleOverlay(QWidget):
         self.move(x, y)
 
     def _reposition(self):
-        """Reanchor window to bottom margin after content height changes."""
-        screen = QApplication.primaryScreen()
+        """Reanchor window to bottom margin after content height changes.
+
+        Stays on the screen the current utterance started on (self._current_screen)
+        so the overlay never jumps mid-sentence; screen re-selection happens on
+        segment_start via _position_window.
+        """
+        screen = self._current_screen or self._target_screen()
         if not screen:
             return
         geom = screen.availableGeometry()
@@ -304,29 +363,43 @@ class SubtitleOverlay(QWidget):
             level = self._apply_macos_window_settings(verbose=True)
 
             # Re-assert settings when the active Space changes (entering/leaving
-            # another app's fullscreen). macOS resets window level on Space change.
+            # another app's fullscreen). macOS resets window level on Space change,
+            # so this event is the primary trigger — driven by NSWorkspace, not a
+            # busy poll.
             try:
-                class _SpaceObserver:
-                    def __init__(self, cb):
-                        self.cb = cb
+                from AppKit import (
+                    NSWorkspace,
+                    NSWorkspaceActiveSpaceDidChangeNotification,
+                )
 
-                    def spaceDidChange_(self, _notification):
-                        self.cb()
+                observer_cls = _space_observer_class()
+                # Strong ref: PyObjC must not GC an observer the notification
+                # center holds only weakly.
+                self._space_observer = observer_cls.alloc().initWithCallback_(
+                    self._apply_macos_window_settings
+                )
+                self._workspace_nc = NSWorkspace.sharedWorkspace().notificationCenter()
+                self._workspace_nc.addObserver_selector_name_object_(
+                    self._space_observer,
+                    b"spaceDidChange:",
+                    NSWorkspaceActiveSpaceDidChangeNotification,
+                    None,
+                )
 
-                # Keep a strong reference so PyObjC doesn't GC the observer
-                self._space_observer = _SpaceObserver(self._apply_macos_window_settings)
-                # Fallback: also re-apply on a timer (cheap, ~500ms)
-                from PyQt6.QtCore import QTimer
+                # Fallback: gentle re-apply in case a notification is missed
+                # (private window tags can reset outside of Space changes too).
                 self._reassert_timer = QTimer(self)
                 self._reassert_timer.timeout.connect(self._apply_macos_window_settings)
-                self._reassert_timer.start(500)
+                self._reassert_timer.start(2000)
 
-                # Verbose diagnostic dump every 5s
-                self._debug_timer = QTimer(self)
-                self._debug_timer.timeout.connect(
-                    lambda: self._apply_macos_window_settings(verbose=True)
-                )
-                self._debug_timer.start(5000)
+                # Verbose diagnostic dump — diagnostic builds only (off by default;
+                # Ctrl+Shift+D gives the same dump on demand).
+                if getattr(self.config, "debug_macos_window", False):
+                    self._debug_timer = QTimer(self)
+                    self._debug_timer.timeout.connect(
+                        lambda: self._apply_macos_window_settings(verbose=True)
+                    )
+                    self._debug_timer.start(5000)
             except Exception as e:
                 log.warning("Space-change observer not installed: %s", e)
 
@@ -386,6 +459,13 @@ class SubtitleOverlay(QWidget):
             if msg_type == "segment_start":
                 # Reset internal buffer but keep label visible until first word arrives
                 self.current_text = []
+                # A new utterance is starting: any late async correction for the
+                # previous final no longer applies to what's on screen.
+                self._pending_correction_seq = None
+                # Between utterances (faded out), re-evaluate which screen is
+                # active so subtitles follow the user to another monitor.
+                if self.windowOpacity() == 0.0 or not self.isVisible():
+                    self._position_window()
             elif msg_type == "word":
                 # Add new word
                 self.current_text.append(message["text"])
@@ -407,7 +487,17 @@ class SubtitleOverlay(QWidget):
                     self.label.setText("")
                     self.fade_anim.stop()
                     self.setWindowOpacity(0.0)
+                    self._pending_correction_seq = None
                     return
+                seq = message.get("seq")
+                if message.get("corrected"):
+                    # Async LLM correction: only replace if this segment is still
+                    # the one displayed (no newer utterance has started since).
+                    if seq is None or seq != self._pending_correction_seq:
+                        return
+                else:
+                    # Fresh final: remember it so its correction can replace it.
+                    self._pending_correction_seq = seq
                 text = message.get("text") or ""
                 self.current_text = text.split() if text else []
                 speaker = message.get("speaker")
@@ -477,6 +567,11 @@ class SubtitleOverlay(QWidget):
             self._reassert_timer.stop()
         if hasattr(self, "_debug_timer"):
             self._debug_timer.stop()
+        if hasattr(self, "_workspace_nc") and hasattr(self, "_space_observer"):
+            try:
+                self._workspace_nc.removeObserver_(self._space_observer)
+            except Exception:
+                pass
         # Disconnect signals to prevent any pending emissions
         try:
             self.new_text_signal.disconnect()

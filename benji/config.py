@@ -123,3 +123,9 @@ class UIConfig:
     window_width_ratio: float = 0.6
     bottom_margin: int = 80
     streaming_display: bool = True  # Display words progressively
+    # Multi-monitor: anchor the overlay on the screen under the cursor (the
+    # user's active display), re-evaluated between utterances. False = primary.
+    follow_active_screen: bool = True
+    # Diagnostic only: verbose macOS window-state dump every 5s (off in prod).
+    # Same info is available on demand via Ctrl+Shift+D.
+    debug_macos_window: bool = False
