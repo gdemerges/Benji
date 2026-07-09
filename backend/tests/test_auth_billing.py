@@ -49,6 +49,48 @@ def test_refresh_token_not_accepted_as_access(client):
     assert r.status_code == 401
 
 
+def test_refresh_rotation_issues_new_token(client):
+    r0 = client.post("/v1/auth/register", json={"email": "rot@b.c", "password": "pw"}).json()
+    r1 = client.post("/v1/auth/refresh", json={"refresh_token": r0["refresh_token"]})
+    assert r1.status_code == 200
+    new = r1.json()["refresh_token"]
+    # La rotation renvoie un refresh_token différent de l'ancien.
+    assert new != r0["refresh_token"]
+    # Le nouveau refresh fonctionne.
+    assert client.post("/v1/auth/refresh", json={"refresh_token": new}).status_code == 200
+
+
+def test_refresh_reuse_revokes_whole_family(client):
+    r0 = client.post("/v1/auth/register", json={"email": "reuse@b.c", "password": "pw"}).json()
+    # Première rotation : R0 → R1.
+    r1 = client.post("/v1/auth/refresh", json={"refresh_token": r0["refresh_token"]}).json()
+
+    # Rejouer R0 (déjà tourné) → 401 et détection de vol.
+    replay = client.post("/v1/auth/refresh", json={"refresh_token": r0["refresh_token"]})
+    assert replay.status_code == 401
+
+    # La réutilisation coupe toute la famille : R1 (pourtant valide avant) est mort.
+    dead = client.post("/v1/auth/refresh", json={"refresh_token": r1["refresh_token"]})
+    assert dead.status_code == 401
+
+
+def test_auth_rate_limited_after_burst(client, monkeypatch):
+    from app import ratelimit
+    # Petite limite pour un test rapide et déterministe.
+    monkeypatch.setattr(ratelimit._login_limiter, "max_hits", 3)
+    ratelimit.reset_all_limiters()
+
+    client.post("/v1/auth/register", json={"email": "rl@b.c", "password": "good"})
+    # 3 tentatives autorisées (le register ci-dessus a déjà consommé 1 hit),
+    # puis la suivante est bloquée en 429.
+    codes = [
+        client.post("/v1/auth/login", json={"email": "rl@b.c", "password": "bad"}).status_code
+        for _ in range(4)
+    ]
+    assert 429 in codes
+    assert codes[-1] == 429
+
+
 # --- Quota STT ---
 
 def test_quota_exceeded_blocks_transcribe(client, pro_token, monkeypatch):

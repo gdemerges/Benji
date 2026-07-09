@@ -28,6 +28,11 @@ class Database:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout : lectures concurrentes non bloquées par une écriture,
+        # et attente plutôt que "database is locked" sous contention. Reste
+        # mono-instance ; le multi-instance impose un vrai serveur (Postgres).
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._init()
 
     def _init(self) -> None:
@@ -48,6 +53,14 @@ class Database:
                     stt_seconds REAL NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_id, period)
                 );
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    jti TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens (user_id);
                 """
             )
             self._conn.commit()
@@ -101,6 +114,47 @@ class Database:
             self._conn.execute(
                 "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
                 (customer_id, user_id),
+            )
+            self._conn.commit()
+
+    # --- refresh tokens (rotation + révocation) ---
+
+    def add_refresh_token(self, jti: str, user_id: str, expires_at: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO refresh_tokens (jti, user_id, expires_at, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (jti, user_id, int(expires_at), datetime.now(UTC).isoformat()),
+            )
+            self._conn.commit()
+
+    def get_refresh_token(self, jti: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM refresh_tokens WHERE jti = ?", (jti,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def revoke_refresh_token(self, jti: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE refresh_tokens SET revoked = 1 WHERE jti = ?", (jti,)
+            )
+            self._conn.commit()
+
+    def revoke_all_refresh_tokens(self, user_id: str) -> None:
+        """Révoque toute la famille de refresh d'un utilisateur (détection de vol)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?", (user_id,)
+            )
+            self._conn.commit()
+
+    def purge_expired_refresh_tokens(self, now: int | None = None) -> None:
+        now = int(now if now is not None else datetime.now(UTC).timestamp())
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM refresh_tokens WHERE expires_at < ?", (now,)
             )
             self._conn.commit()
 

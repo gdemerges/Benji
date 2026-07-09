@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import os
 import time
+import uuid
 
 import jwt
 
@@ -46,9 +47,11 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(dk, _unb64(dk_b64))
 
 
-def _make_token(sub: str, token_type: str, ttl: int) -> str:
+def _make_token(sub: str, token_type: str, ttl: int, jti: str | None = None) -> str:
     now = int(time.time())
     payload = {"sub": sub, "type": token_type, "iat": now, "exp": now + ttl}
+    if jti is not None:
+        payload["jti"] = jti
     return jwt.encode(payload, jwt_secret(), algorithm="HS256")
 
 
@@ -56,8 +59,17 @@ def create_access_token(sub: str) -> str:
     return _make_token(sub, "access", ACCESS_TTL_SECONDS)
 
 
-def create_refresh_token(sub: str) -> str:
-    return _make_token(sub, "refresh", REFRESH_TTL_SECONDS)
+def create_refresh_token(sub: str) -> tuple[str, str, int]:
+    """Crée un refresh token porteur d'un `jti` unique.
+
+    Renvoie `(token, jti, expires_at)` — le `jti` et l'expiration sont persistés
+    côté serveur (table `refresh_tokens`) pour permettre la rotation et la
+    révocation (un refresh stateless ne peut être ni tourné ni invalidé).
+    """
+    jti = uuid.uuid4().hex
+    expires_at = int(time.time()) + REFRESH_TTL_SECONDS
+    token = _make_token(sub, "refresh", REFRESH_TTL_SECONDS, jti=jti)
+    return token, jti, expires_at
 
 
 def decode_token(token: str, expected_type: str) -> str | None:
@@ -69,3 +81,21 @@ def decode_token(token: str, expected_type: str) -> str | None:
     if payload.get("type") != expected_type:
         return None
     return payload.get("sub")
+
+
+def decode_refresh(token: str) -> tuple[str, str] | None:
+    """Valide un refresh token et renvoie `(sub, jti)`, sinon None.
+
+    Un jeton sans `jti` (émis avant la rotation) est refusé : il ne peut plus
+    être suivi côté serveur, donc on force une reconnexion.
+    """
+    try:
+        payload = jwt.decode(token, jwt_secret(), algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return None
+    if payload.get("type") != "refresh":
+        return None
+    sub, jti = payload.get("sub"), payload.get("jti")
+    if not sub or not jti:
+        return None
+    return sub, jti

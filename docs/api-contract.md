@@ -46,6 +46,15 @@
 // 200 : même forme que /login
 ```
 
+**Rotation** : chaque refresh réussi **révoque** le `refresh_token` présenté et en
+émet un nouveau — le client doit donc persister le refresh renvoyé à chaque appel.
+Rejouer un refresh déjà tourné est traité comme un vol : toute la famille de
+jetons de l'utilisateur est révoquée et l'appel renvoie `401 unauthenticated`
+(reconnexion requise).
+
+> Les endpoints `/v1/auth/*` sont **rate-limités** (par IP) : un excès de
+> tentatives renvoie `429 rate_limited`.
+
 ### 1.3 Usage
 
 - REST/SSE : header `Authorization: Bearer <access_token>`.
