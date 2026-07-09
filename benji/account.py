@@ -5,9 +5,12 @@ connecter avec les mêmes identifiants sur n'importe quelle plateforme retrouve
 le même plan — le backend rattache le plan à l'utilisateur (cf.
 docs/api-contract.md §1-2, docs/cloud-architecture.md).
 
-Les jetons sont stockés dans `~/.cache/benji/credentials.json` (chmod 600),
-même convention que l'historique. L'access token (15 min) est rafraîchi à la
-volée via le refresh token (30 j) tant que ce dernier est valide.
+Les jetons sont stockés dans le trousseau du système via `keyring` (Keychain
+macOS / Credential Locker Windows / Secret Service Linux). Si le trousseau est
+indisponible, on retombe sur `~/.cache/benji/credentials.json` (chmod 600), même
+convention que l'historique — et un fichier hérité est migré vers le trousseau
+au premier accès. L'access token (15 min) est rafraîchi à la volée via le refresh
+token (30 j) tant que ce dernier est valide.
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 _CRED_PATH = Path.home() / ".cache" / "benji" / "credentials.json"
+_KEYRING_SERVICE = "benji"
+_KEYRING_USER = "credentials"
 
 
 class AuthError(RuntimeError):
@@ -46,12 +51,76 @@ def _error_message(resp) -> str:
 
 
 class CredentialStore:
-    """Persistance locale des jetons (fichier privé 0600)."""
+    """Persistance des jetons : trousseau système (keyring) + fallback fichier 0600.
 
-    def __init__(self, path: Path = _CRED_PATH):
+    `use_keyring=False` force le mode fichier (utilisé par les tests pour rester
+    hermétiques, sans toucher au vrai trousseau).
+    """
+
+    def __init__(self, path: Path = _CRED_PATH, *, use_keyring: bool = True):
         self._path = path
+        self._use_keyring = use_keyring
+
+    def _keyring(self):
+        """Module keyring si un backend utilisable est disponible, sinon None."""
+        if not self._use_keyring:
+            return None
+        try:
+            import keyring
+            from keyring.backends.fail import Keyring as _FailKeyring
+            if isinstance(keyring.get_keyring(), _FailKeyring):
+                return None  # pas de backend réel (ex. CI headless) → fichier
+            return keyring
+        except Exception:
+            return None
 
     def load(self) -> dict | None:
+        kr = self._keyring()
+        if kr is not None:
+            try:
+                raw = kr.get_password(_KEYRING_SERVICE, _KEYRING_USER)
+            except Exception as e:
+                log.debug("keyring load échoué, fallback fichier : %s", e)
+                raw = None
+            if raw:
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
+                    return None
+            # Trousseau vide : migrer un éventuel fichier hérité puis l'effacer.
+            legacy = self._load_file()
+            if legacy is not None:
+                try:
+                    kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, json.dumps(legacy))
+                    self._path.unlink(missing_ok=True)
+                    log.info("Jetons migrés du fichier vers le trousseau système.")
+                except Exception as e:
+                    log.debug("Migration vers keyring échouée : %s", e)
+            return legacy
+        return self._load_file()
+
+    def save(self, data: dict) -> None:
+        kr = self._keyring()
+        if kr is not None:
+            try:
+                kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, json.dumps(data))
+                # Pas de copie en clair sur le disque une fois dans le trousseau.
+                self._path.unlink(missing_ok=True)
+                return
+            except Exception as e:
+                log.warning("keyring save échoué, fallback fichier : %s", e)
+        self._save_file(data)
+
+    def clear(self) -> None:
+        kr = self._keyring()
+        if kr is not None:
+            try:
+                kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER)
+            except Exception:
+                pass
+        self._path.unlink(missing_ok=True)
+
+    def _load_file(self) -> dict | None:
         if not self._path.exists():
             return None
         try:
@@ -59,13 +128,10 @@ class CredentialStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def save(self, data: dict) -> None:
+    def _save_file(self, data: dict) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(data), encoding="utf-8")
         self._path.chmod(0o600)
-
-    def clear(self) -> None:
-        self._path.unlink(missing_ok=True)
 
 
 class AuthClient:

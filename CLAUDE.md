@@ -6,7 +6,7 @@ macOS real-time transcription app. Pipeline: mic → VAD → STT → subtitle ov
 
 - Python 3.12, PyQt6, Apple Silicon (mlx). No mypy, no type stubs.
 - Dependency management: **uv** (`pyproject.toml` is source of truth). `uv sync` to install, `uv run benji` to launch.
-- All config is in `benji/config.py` — no env vars, no config files.
+- Tunable config lives in `benji/config.py` (dataclasses), not config files. A few operational/secret settings are read from env vars instead: `BENJI_LAUNCH_MODE`, `BENJI_LOG_LEVEL`, `BENJI_VIBRANCY`, `HF_TOKEN`/`HUGGINGFACE_HUB_TOKEN` (diarization), `ANTHROPIC_API_KEY` (cloud summary).
 - Three inter-thread queues: `audio_queue` → `transcribe_queue` → `display_queue`. Never block the Qt thread.
 - `STTConfig.language` defaults to `"fr"`. Keep French in mind when touching STT logic.
 - macOS: accessory policy must be set before `QApplication()` — see `benji/main.py:9`.
