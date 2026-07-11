@@ -29,3 +29,27 @@ def test_callback_without_stats_still_drops_silently():
     capture._callback(_chunk(), 4, None, None)
     capture._callback(_chunk(), 4, None, None)  # ne doit pas lever
     assert capture.audio_queue.qsize() == 1
+
+
+def test_pause_closes_stream_and_resume_reopens(monkeypatch):
+    """pause() ferme le stream (indicateur micro macOS éteint) ; resume() le rouvre."""
+    capture = AudioCapture(Queue())
+    opened: list[bool] = []
+    monkeypatch.setattr(capture, "_open_stream", lambda: opened.append(True) or True)
+    closed: list[bool] = []
+    monkeypatch.setattr(capture, "_close_stream", lambda: closed.append(True))
+
+    assert not capture.is_paused
+    capture.pause()
+    assert capture.is_paused
+    assert closed == [True]
+
+    capture.pause()  # idempotent : pas de double fermeture
+    assert closed == [True]
+
+    capture.resume()
+    assert not capture.is_paused
+    assert opened == [True]
+
+    capture.resume()  # idempotent : pas de double ouverture
+    assert opened == [True]

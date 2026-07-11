@@ -143,7 +143,7 @@ class BenjiApplication:
         from benji.settings import UserSettings
 
         self.user_settings = UserSettings()
-        self.user_settings.hydrate(stt=self.cfg.stt, ui=self.cfg.ui)
+        self.user_settings.hydrate(stt=self.cfg.stt, ui=self.cfg.ui, llm=self.cfg.llm)
 
     def _build_account(self) -> None:
         # Compte Benji : si une session est enregistrée, on injecte son access
@@ -320,7 +320,27 @@ class BenjiApplication:
         PreferencesDialog(
             self.cfg.stt, self.cfg.ui, self.user_settings,
             on_live_change=self.overlay.apply_config,
+            llm_config=self.cfg.llm,
         ).exec()
+
+    def toggle_pause(self) -> bool:
+        """Bascule la pause micro. Retourne le nouvel état (True = en pause).
+
+        La pause ferme réellement le stream d'entrée (l'indicateur micro macOS
+        s'éteint). Appelé depuis le tray et la fenêtre principale — thread Qt.
+        """
+        if self.capture.is_paused:
+            self.capture.resume()
+        else:
+            self.capture.pause()
+            # L'utterance en cours ne sera jamais terminée : éteindre
+            # l'indicateur « en écoute » de l'UI.
+            if self.display_queue is not None:
+                self.display_queue.put({"type": "vad_status", "speaking": False})
+        paused = self.capture.is_paused
+        if self.main_window is not None:
+            self.main_window.set_paused(paused)
+        return paused
 
     def _build_windows(self) -> None:
         self.history_window = HistoryWindow(session_start=self.session_start, stats=self.stats)
@@ -342,6 +362,7 @@ class BenjiApplication:
             summary_worker=self.summary_worker,
             on_minimize=lambda: self.controller.show_overlay() if self.controller else None,
             on_open_preferences=self._open_preferences,
+            on_toggle_pause=self.toggle_pause,
             session=self.session,
             backend_url=self.cfg.llm.backend_url,
         )
@@ -359,6 +380,8 @@ class BenjiApplication:
             self.history_window, self.live_summary_window,
             show_main_window=show_main, session=self.session,
             backend_url=self.cfg.llm.backend_url, open_preferences=self._open_preferences,
+            toggle_pause=self.toggle_pause,
+            is_paused=lambda: self.capture.is_paused,
         )
 
         # Optional: rolling live summary.

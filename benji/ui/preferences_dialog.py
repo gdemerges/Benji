@@ -55,6 +55,14 @@ _SUMMARY_INTERVALS = [
     (900, "Toutes les 15 min"),
 ]
 
+# (valeur config, libellé). "remote" = backend Benji, débloqué par l'abonnement
+# Pro. Le mode "cloud" (clé Anthropic sur le poste) est réservé au dev : il
+# n'apparaît que s'il est déjà actif dans la config.
+_PROVIDERS = [
+    ("local", "Local — sur ce Mac"),
+    ("remote", "Cloud Benji — abonnement Pro"),
+]
+
 
 # Famille système macOS (privée, préfixée « . ») : QFontComboBox ne sait pas
 # l'afficher et retombe sur une entrée arbitraire de la liste. On la représente
@@ -76,13 +84,16 @@ class PreferencesDialog(QDialog):
         ui_config,
         settings: UserSettings,
         on_live_change: Callable[[object], None] | None = None,
+        llm_config=None,
         parent=None,
     ):
         """on_live_change: reçoit une UIConfig mise à jour pour application à chaud
-        (typiquement `overlay.apply_config`)."""
+        (typiquement `overlay.apply_config`). llm_config: LLMConfig — si fournie,
+        expose le choix des moteurs (transcription/résumé local vs cloud Benji)."""
         super().__init__(parent)
         self._stt = stt_config
         self._ui = ui_config
+        self._llm = llm_config
         self._settings = settings
         self._on_live_change = on_live_change
         self.setWindowTitle("Préférences Benji")
@@ -130,6 +141,31 @@ class PreferencesDialog(QDialog):
         self._hint = QLabel("Ces réglages prennent effet au prochain démarrage.")
         stt_form.addRow(self._hint)
         layout.addWidget(self._stt_box)
+
+        # === Moteurs local / cloud Benji (redémarrage requis) ===
+        self._engine_box = None
+        self._hint_engines = None
+        if self._llm is not None:
+            self._engine_box = QGroupBox("MOTEURS")
+            engine_form = QFormLayout(self._engine_box)
+            engine_form.setContentsMargins(16, 18, 16, 16)
+            engine_form.setSpacing(12)
+            engine_form.setLabelAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+
+            self._stt_provider = self._provider_combo(self._stt.stt_provider)
+            engine_form.addRow("Transcription", self._stt_provider)
+
+            self._summary_provider = self._provider_combo(self._llm.summary_provider)
+            engine_form.addRow("Résumé", self._summary_provider)
+
+            self._hint_engines = QLabel(
+                "Le cloud Benji nécessite un compte avec abonnement Pro. "
+                "Effet au prochain démarrage."
+            )
+            engine_form.addRow(self._hint_engines)
+            layout.addWidget(self._engine_box)
 
         # === Affichage (application immédiate) ===
         self._ui_box = QGroupBox("AFFICHAGE")
@@ -276,15 +312,30 @@ class PreferencesDialog(QDialog):
         """)
         # Le bandeau d'info en couleur secondaire (le QSS QLabel ci-dessus cible
         # aussi ce label, on le repasse en tertiaire ici pour le distinguer).
-        self._hint.setStyleSheet(
+        hint_qss = (
             f"font-family: {FONT_UI}; font-size: 11px; color: {rgba(sec)}; background: transparent;"
         )
+        self._hint.setStyleSheet(hint_qss)
+        if self._hint_engines is not None:
+            self._hint_engines.setStyleSheet(hint_qss)
 
     @staticmethod
     def _select_data(combo: QComboBox, data) -> None:
         idx = combo.findData(data)
         if idx >= 0:
             combo.setCurrentIndex(idx)
+
+    @staticmethod
+    def _provider_combo(current: str) -> QComboBox:
+        """Combo local/remote ; une valeur hors liste (ex. « cloud » en dev)
+        est ajoutée telle quelle pour ne pas être écrasée silencieusement."""
+        combo = QComboBox()
+        for value, label in _PROVIDERS:
+            combo.addItem(label, value)
+        if combo.findData(current) < 0:
+            combo.addItem(current, current)
+        PreferencesDialog._select_data(combo, current)
+        return combo
 
     def _save(self) -> None:
         s = self._settings
@@ -303,6 +354,15 @@ class PreferencesDialog(QDialog):
         self._stt.model_size = model_size
         self._stt.diarization = diarization
         self._stt.live_summary_interval_s = summary_interval
+
+        # --- Moteurs : persister + mettre à jour la config (effet au reboot) ---
+        if self._llm is not None:
+            stt_provider = self._stt_provider.currentData()
+            summary_provider = self._summary_provider.currentData()
+            s.set_value("stt_provider", stt_provider)
+            s.set_value("summary_provider", summary_provider)
+            self._stt.stt_provider = stt_provider
+            self._llm.summary_provider = summary_provider
 
         # --- Affichage : persister + appliquer à chaud ---
         font_family = self._font.currentFont().family()

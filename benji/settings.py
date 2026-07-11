@@ -28,7 +28,7 @@ class PrefSpec:
     """Lie une clé persistée à un attribut d'une dataclass de config."""
 
     key: str          # clé logique (préfixée `prefs/` dans QSettings)
-    target: str       # "stt" | "ui"
+    target: str       # "stt" | "ui" | "llm"
     attr: str         # nom de l'attribut sur la config cible
     kind: type        # int | float | str | bool
     nullable: bool = False  # str seulement : "" persisté ↔ None (ex. langue = auto)
@@ -42,6 +42,10 @@ PREFS: tuple[PrefSpec, ...] = (
     PrefSpec("model_size", "stt", "model_size", str, restart=True),
     PrefSpec("diarization", "stt", "diarization", bool, restart=True),
     PrefSpec("live_summary_interval_s", "stt", "live_summary_interval_s", int, restart=True),
+    # --- Moteurs local/cloud (redémarrage requis) ---
+    # "remote" = via le backend Benji (abonnement Pro) — cf. STTConfig/LLMConfig.
+    PrefSpec("stt_provider", "stt", "stt_provider", str, restart=True),
+    PrefSpec("summary_provider", "llm", "summary_provider", str, restart=True),
     # --- Affichage (application live) ---
     PrefSpec("font_family", "ui", "font_family", str),
     PrefSpec("font_size", "ui", "font_size", int),
@@ -92,12 +96,12 @@ class UserSettings:
         self._s.setValue(_PREFIX + key, _encode(spec, value))
         self._s.sync()
 
-    def hydrate(self, *, stt=None, ui=None) -> None:
+    def hydrate(self, *, stt=None, ui=None, llm=None) -> None:
         """Applique les valeurs persistées sur les dataclasses de config fournies.
 
         Les clés absentes laissent le défaut de `config.py` intact.
         """
-        targets = {"stt": stt, "ui": ui}
+        targets = {"stt": stt, "ui": ui, "llm": llm}
         for spec in PREFS:
             obj = targets.get(spec.target)
             if obj is None:

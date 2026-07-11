@@ -31,7 +31,14 @@ from benji.ui.style import (
     install_theme_listener,
 )
 from benji.ui.summaries_tab import SummariesTab
-from benji.ui.widgets.icons import doc_text_icon, minimize_icon, person_icon, sliders_icon
+from benji.ui.widgets.icons import (
+    doc_text_icon,
+    mic_icon,
+    mic_slash_icon,
+    minimize_icon,
+    person_icon,
+    sliders_icon,
+)
 from benji.ui.widgets.segmented_control import SegmentedControl
 from benji.ui.widgets.status_pill import StatusPill
 
@@ -52,10 +59,13 @@ class MainWindow(QMainWindow):
         summary_worker,
         on_minimize=None,
         on_open_preferences=None,
+        on_toggle_pause=None,
         session=None,
         backend_url: str = "",
         parent=None,
     ):
+        """on_toggle_pause: callable() -> bool — bascule la pause micro côté app
+        et retourne le nouvel état (True = en pause)."""
         super().__init__(parent)
         self.setWindowTitle("Benji")
         self._bus = bus
@@ -64,6 +74,8 @@ class MainWindow(QMainWindow):
         self._worker = summary_worker
         self._on_minimize = on_minimize
         self._on_open_preferences = on_open_preferences
+        self._on_toggle_pause = on_toggle_pause
+        self._paused = False
         # Contrôleur compte/facturation (login + abonnement Stripe) — présent
         # seulement si une session est fournie. Succès/erreurs via QMessageBox.
         self._account = None
@@ -108,6 +120,14 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+
+        # Pause micro — coupe réellement la capture (indicateur macOS éteint).
+        self.pause_btn = QPushButton()
+        self.pause_btn.setObjectName("icon_btn")
+        self.pause_btn.setToolTip("Suspendre le micro")
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        if self._on_toggle_pause is not None:
+            tb.addWidget(self.pause_btn)
 
         # Compte / abonnement (modèle distant plus puissant) — icône seule + menu.
         self.account_btn = QPushButton()
@@ -258,6 +278,31 @@ class MainWindow(QMainWindow):
         self.account_btn.setStyleSheet(icon_qss)
         self.settings_btn.setIcon(sliders_icon(label_hex))
         self.settings_btn.setStyleSheet(icon_qss)
+        self.pause_btn.setStyleSheet(icon_qss)
+        self._refresh_pause_icon()
+
+    def _refresh_pause_icon(self) -> None:
+        t = current_theme()
+        if self._paused:
+            # Micro barré en rouge : état inhabituel, bien visible.
+            red = t.live_red
+            self.pause_btn.setIcon(mic_slash_icon(f"#{red.red():02x}{red.green():02x}{red.blue():02x}"))
+            self.pause_btn.setToolTip("Reprendre le micro")
+        else:
+            label = t.label
+            self.pause_btn.setIcon(mic_icon(f"#{label.red():02x}{label.green():02x}{label.blue():02x}"))
+            self.pause_btn.setToolTip("Suspendre le micro")
+
+    def _toggle_pause(self) -> None:
+        if self._on_toggle_pause is None:
+            return
+        self.set_paused(bool(self._on_toggle_pause()))
+
+    def set_paused(self, paused: bool) -> None:
+        """Reflète l'état pause (appelé après un toggle local ou depuis le tray)."""
+        self._paused = paused
+        self.status_pill.set_paused(paused)
+        self._refresh_pause_icon()
 
     def _wire_worker(self) -> None:
         self._worker.started.connect(self._on_summary_started)

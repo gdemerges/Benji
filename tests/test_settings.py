@@ -6,7 +6,7 @@ préférences réelles de l'utilisateur, aucun QApplication requis.
 
 from PyQt6.QtCore import QSettings
 
-from benji.config import STTConfig, UIConfig
+from benji.config import LLMConfig, STTConfig, UIConfig
 from benji.settings import UserSettings
 
 
@@ -54,6 +54,20 @@ def test_hydrate_leaves_defaults_for_missing_keys(tmp_path):
     default_font_size = ui.font_size
     s.hydrate(ui=ui)
     assert ui.font_size == default_font_size
+
+
+def test_hydrate_providers(tmp_path):
+    s = _settings(tmp_path)
+    s.set_value("stt_provider", "remote")
+    s.set_value("summary_provider", "remote")
+
+    stt, llm = STTConfig(), LLMConfig()
+    assert stt.stt_provider == "local"  # défauts
+    assert llm.summary_provider == "local"
+    s.hydrate(stt=stt, llm=llm)
+
+    assert stt.stt_provider == "remote"
+    assert llm.summary_provider == "remote"
 
 
 def test_hydrate_language_empty_string_means_auto(tmp_path):

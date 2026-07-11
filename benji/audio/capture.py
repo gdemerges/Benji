@@ -25,6 +25,7 @@ class AudioCapture:
         self.stats = stats  # benji.stats.SessionStats (optional)
         self.stream: sd.InputStream | None = None
         self._stop = threading.Event()
+        self._paused = threading.Event()
         self._watchdog: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_drop_log = 0.0
@@ -79,6 +80,9 @@ class AudioCapture:
         """Poll stream health and reopen if the device disappears."""
         while not self._stop.is_set():
             time.sleep(1.0)
+            if self._paused.is_set():
+                # Pause volontaire : le stream est fermé, ne pas le rouvrir.
+                continue
             with self._lock:
                 active = self.stream is not None and self.stream.active
             if active:
@@ -93,11 +97,36 @@ class AudioCapture:
                 pass
             # Retry with exponential backoff (capped)
             delay = 0.5
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not self._paused.is_set():
                 if self._open_stream():
                     break
                 time.sleep(delay)
                 delay = min(delay * 2, 5.0)
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused.is_set()
+
+    def pause(self) -> None:
+        """Suspend la capture en FERMANT le stream (pas juste en ignorant les
+        chunks) : l'indicateur micro de macOS s'éteint — garantie visible que
+        rien n'est écouté."""
+        if self._paused.is_set():
+            return
+        self._paused.set()
+        self._close_stream()
+        log.info("Micro paused")
+
+    def resume(self) -> None:
+        """Rouvre le stream. En cas d'échec immédiat (device disparu pendant la
+        pause), le watchdog reprend ses tentatives de reconnexion."""
+        if not self._paused.is_set():
+            return
+        self._paused.clear()
+        if not self._open_stream():
+            log.warning("Resume failed — watchdog will retry")
+        else:
+            log.info("Micro resumed")
 
     def start(self):
         if not self._open_stream():

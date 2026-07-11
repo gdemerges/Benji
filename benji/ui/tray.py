@@ -63,6 +63,8 @@ def build_tray(
     session=None,
     backend_url: str = "",
     open_preferences=None,
+    toggle_pause=None,
+    is_paused=None,
 ) -> QSystemTrayIcon:
     """show_main_window: callable() — when present, adds an 'Afficher fenêtre' item
     that invokes this callback. The caller is expected to route through the
@@ -71,11 +73,27 @@ def build_tray(
     session: benji.account.Session — when present, adds an account section
     (login/logout) and, once connected, Stripe billing items. The subscription
     follows the account across platforms.
+
+    toggle_pause: callable() -> bool — bascule la pause micro et retourne le
+    nouvel état. is_paused: callable() -> bool — état courant, relu à chaque
+    ouverture du menu (la pause peut aussi être basculée depuis la fenêtre).
     """
     tray = QSystemTrayIcon(_make_icon())
     tray.setToolTip("Benji — live subtitles")
 
     menu = QMenu()
+
+    if toggle_pause is not None:
+        pause_action = QAction("Suspendre le micro", menu)
+
+        def _refresh_pause_text(paused: bool) -> None:
+            pause_action.setText("Reprendre le micro" if paused else "Suspendre le micro")
+
+        pause_action.triggered.connect(lambda: _refresh_pause_text(bool(toggle_pause())))
+        if is_paused is not None:
+            menu.aboutToShow.connect(lambda: _refresh_pause_text(bool(is_paused())))
+        menu.addAction(pause_action)
+        menu.addSeparator()
 
     if show_main_window is not None:
         show_main = QAction("Afficher fenêtre", menu)

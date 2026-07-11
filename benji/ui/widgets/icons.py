@@ -48,6 +48,23 @@ _SLIDERS = """
 </svg>
 """
 
+_MIC = """
+<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+  <rect x='9' y='3' width='6' height='11' rx='3' fill='none' stroke='COLOR' stroke-width='1.6'/>
+  <path d='M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3' fill='none' stroke='COLOR'
+        stroke-width='1.6' stroke-linecap='round'/>
+</svg>
+"""
+
+_MIC_SLASH = """
+<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+  <rect x='9' y='3' width='6' height='11' rx='3' fill='none' stroke='COLOR' stroke-width='1.6'/>
+  <path d='M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3' fill='none' stroke='COLOR'
+        stroke-width='1.6' stroke-linecap='round'/>
+  <path d='M4 4l16 16' stroke='COLOR' stroke-width='1.8' stroke-linecap='round'/>
+</svg>
+"""
+
 _PERSON = """
 <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
   <circle cx='12' cy='8' r='3.5' fill='none' stroke='COLOR' stroke-width='1.6'/>
@@ -90,3 +107,11 @@ def sliders_icon(color_hex: str) -> QIcon:
 
 def person_icon(color_hex: str) -> QIcon:
     return _render(_PERSON, color_hex)
+
+
+def mic_icon(color_hex: str) -> QIcon:
+    return _render(_MIC, color_hex)
+
+
+def mic_slash_icon(color_hex: str) -> QIcon:
+    return _render(_MIC_SLASH, color_hex)

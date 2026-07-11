@@ -67,6 +67,7 @@ class StatusPill(QWidget):
         super().__init__(parent)
         self._session_start = session_start
         self._speaking = False
+        self._paused = False
 
         self.dot = _PulseDot(self)
         self.status_label = QLabel("En attente")
@@ -115,13 +116,31 @@ class StatusPill(QWidget):
         if speaking == self._speaking:
             return
         self._speaking = speaking
-        self.status_label.setText("En écoute" if speaking else "En attente")
+        self._refresh_state()
+
+    def set_paused(self, paused: bool) -> None:
+        """État pause micro : prime sur « En écoute »/« En attente »."""
+        if paused == self._paused:
+            return
+        self._paused = paused
+        if paused:
+            self._speaking = False
+        self._refresh_state()
+
+    def _refresh_state(self) -> None:
+        if self._paused:
+            self.status_label.setText("Micro en pause")
+        else:
+            self.status_label.setText("En écoute" if self._speaking else "En attente")
         self._refresh_dot_color()
-        self.dot.set_pulsing(speaking)
+        self.dot.set_pulsing(self._speaking and not self._paused)
 
     def _refresh_dot_color(self) -> None:
         t = current_theme()
-        self.dot.set_color(t.live_red if self._speaking else t.tertiary_label)
+        if self._paused:
+            self.dot.set_color(t.quaternary_label)
+        else:
+            self.dot.set_color(t.live_red if self._speaking else t.tertiary_label)
 
     def _tick(self) -> None:
         delta: timedelta = datetime.now() - self._session_start
