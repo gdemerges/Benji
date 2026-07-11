@@ -12,6 +12,12 @@ macOS real-time transcription app. Pipeline: mic → VAD → STT → subtitle ov
 - macOS: accessory policy must be set before `QApplication()` — see `benji/main.py:9`.
 - Run: `uv run benji`. Tests: `uv run pytest`.
 
+## Vault Obsidian
+
+Le suivi de ce projet est documenté dans : `/Users/guillaumedemerges/Documents/Life/wiki/projects/Benji`
+
+**Règle** : à la fin d'une session de travail significative (feature terminée, architecture changée, checklist publication avancée), mets à jour la note concernée avec les changements. Garde le format existant (frontmatter, sections, checkboxes cochées/décochées).
+
 ## Modules
 
 - [benji/](benji/CLAUDE.md) — core package, entry point, config, history, stats
