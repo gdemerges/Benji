@@ -1,4 +1,5 @@
 import logging
+import queue
 import threading
 import time
 from queue import Queue
@@ -10,23 +11,39 @@ from benji.config import AudioConfig
 
 log = logging.getLogger(__name__)
 
+# Throttle for "audio_queue full" warnings: log the first drop, then at most
+# one warning every N seconds (the CoreAudio callback fires ~30x/s).
+_DROP_LOG_INTERVAL_S = 5.0
+
 
 class AudioCapture:
     """Microphone capture with automatic reconnection on device changes."""
 
-    def __init__(self, audio_queue: Queue, config: AudioConfig = None):
+    def __init__(self, audio_queue: Queue, config: AudioConfig = None, stats=None):
         self.config = config or AudioConfig()
         self.audio_queue = audio_queue
+        self.stats = stats  # benji.stats.SessionStats (optional)
         self.stream: sd.InputStream | None = None
         self._stop = threading.Event()
         self._watchdog: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._last_drop_log = 0.0
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status):
+        # IMPORTANT: never block here — this runs on the CoreAudio/PortAudio
+        # realtime thread. If the consumer stalls, drop the chunk instead.
         if status:
             # Non-fatal (overflow, underflow); log at most
             log.warning("%s", status)
-        self.audio_queue.put(indata[:, 0].copy())
+        try:
+            self.audio_queue.put_nowait(indata[:, 0].copy())
+        except queue.Full:
+            if self.stats is not None:
+                self.stats.record_drop("audio_queue_full")
+            now = time.monotonic()
+            if now - self._last_drop_log >= _DROP_LOG_INTERVAL_S:
+                self._last_drop_log = now
+                log.warning("audio_queue full — dropping audio chunks")
 
     def _open_stream(self) -> bool:
         try:

@@ -1,6 +1,8 @@
 """RemoteSTTClient : conversion audio, handshake, relais d'events — sans réseau."""
 
 import json
+import threading
+import time
 from queue import Queue
 
 import numpy as np
@@ -80,10 +82,26 @@ def test_send_loop_streams_pcm_then_stop():
     client.audio_queue.put(chunk)
     client.audio_queue.put(None)  # sentinelle de fin
 
-    client._send_loop(conn)
+    client._send_loop(conn, threading.Event())
 
     assert conn.sent[0] == float32_to_pcm16(chunk)
     assert json.loads(conn.sent[1]) == {"type": "stop"}
+    # La sentinelle marque l'arrêt définitif (pas de reconnexion ensuite).
+    assert client._shutdown.is_set()
+
+
+def test_send_loop_exits_on_conn_closed_without_stealing_chunks():
+    # À la déconnexion, le sender du cycle précédent doit se terminer sans
+    # consommer les chunks destinés à la connexion suivante.
+    client, conn = _client()
+    closed = threading.Event()
+    closed.set()
+    client.audio_queue.put(np.zeros(2, dtype=np.float32))
+
+    client._send_loop(conn, closed)
+
+    assert conn.sent == []
+    assert client.audio_queue.qsize() == 1
 
 
 def test_recv_loop_relays_events_and_persists_final():
@@ -118,6 +136,56 @@ def test_recv_loop_ignores_dropped_final():
     client, conn = _client(recv_script=script, history=history)
     client._recv_loop(conn)
     assert history.added == []  # un final droppé n'est pas persisté
+
+
+def test_run_reconnects_after_connection_loss():
+    """Perte de connexion → backoff, event UI « pas de parole », reconnexion."""
+    display = Queue()
+    attempts = {"n": 0}
+
+    def connect():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ConnectionError("réseau tombé")  # 1er essai : échec
+        # Ensuite : handshake ok, puis le backend ferme aussitôt.
+        return FakeConn([json.dumps({"type": "ready"}), json.dumps({"type": "closed"})])
+
+    client = RemoteSTTClient(
+        Queue(), display, None, ws_url="ws://test/v1/transcribe", connect=connect,
+    )
+    client._backoff_initial = 0.01
+    client._backoff_max = 0.02
+
+    t = threading.Thread(target=client.run, daemon=True)
+    t.start()
+    # Attendre au moins un échec + deux connexions réussies (reconnexion prouvée).
+    deadline = time.monotonic() + 5.0
+    while attempts["n"] < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert attempts["n"] >= 3
+
+    # La sentinelle None (shutdown) termine définitivement la boucle.
+    client.audio_queue.put(None)
+    t.join(timeout=5.0)
+    assert not t.is_alive()
+
+    # Chaque déconnexion a poussé un vad_status speaking=False vers l'UI.
+    events = []
+    while not display.empty():
+        events.append(display.get())
+    assert {"type": "vad_status", "speaking": False} in events
+
+
+def test_token_provider_used_at_each_connection():
+    tokens = iter(["tok-1", "tok-2"])
+    client = RemoteSTTClient(
+        Queue(), Queue(), None, ws_url="ws://test/v1/transcribe",
+        token="statique", token_provider=lambda: next(tokens),
+        connect=lambda: FakeConn([]),
+    )
+    # Le provider prime sur le token statique et est rappelé à chaque connexion.
+    assert client.start_message()["token"] == "tok-1"
+    assert client.start_message()["token"] == "tok-2"
 
 
 def test_builder_converts_http_to_ws():

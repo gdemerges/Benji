@@ -42,3 +42,20 @@ def test_english_contractions():
 
 def test_multiple_spaces_collapsed():
     assert "  " not in postprocess_text("hello    world")
+
+
+def test_decimal_numbers_preserved():
+    # Pas d'espace inséré entre deux chiffres (virgule ou point décimal).
+    assert "2,5" in postprocess_text("il fait 2,5 degrés")
+    assert "3.14" in postprocess_text("pi vaut 3.14 environ")
+
+
+def test_eh_bien_preserved():
+    # « eh », « ah », « oh » sont des mots légitimes en français.
+    assert postprocess_text("eh bien voilà") == "Eh bien voilà"
+    assert postprocess_text("ah bon, d'accord") == "Ah bon, d'accord"
+
+
+def test_leading_hesitation_leaves_no_orphan_punctuation():
+    # « Euh, oui » → suppression de l'hésitation → pas de « , oui » résiduel.
+    assert postprocess_text("euh, oui") == "Oui"

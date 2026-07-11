@@ -21,7 +21,12 @@ def _make_icon() -> QIcon:
     p.setFont(QFont(".AppleSystemUIFont", 15, QFont.Weight.Bold))
     p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "B")
     p.end()
-    return QIcon(pix)
+    icon = QIcon(pix)
+    # Template image macOS : le système recolore le glyphe (noir attendu) selon
+    # le thème de la barre de menus — sinon le « B » est invisible en dark mode.
+    # Sans effet sur les autres plateformes.
+    icon.setIsMask(True)
+    return icon
 
 
 def _build_account_section(menu: QMenu, account: AccountController) -> None:

@@ -46,6 +46,17 @@ def test_no_token_leaves_backend_token_untouched(monkeypatch):
     assert app.cfg.llm.backend_token is None
 
 
+def test_build_pipeline_remote_skips_vad():
+    # En mode remote, le VAD n'est jamais démarré : on ne doit pas charger
+    # le modèle Silero (VADProcessor.__init__).
+    app = BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="remote")))
+    app._build_pipeline()
+    assert app.remote_mode is True
+    assert app.vad is None
+    # Les drops du callback audio sont comptés dans les stats de session.
+    assert app.capture.stats is app.stats
+
+
 def test_shutdown_is_safe_before_run():
     # Tous les composants sont None sur une instance non démarrée : shutdown()
     # ne doit rien tenter d'invalide (garantit un arrêt propre même si le

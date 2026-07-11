@@ -156,6 +156,10 @@ class BenjiApplication:
             self.cfg.llm.backend_token = token
 
     def _build_pipeline(self) -> None:
+        # Calculé ici (et pas dans _create_qapp) : le choix local/remote pilote
+        # la construction du pipeline, avant même la création du QApplication.
+        self.remote_mode = self.cfg.stt.stt_provider == "remote"
+
         self.stats = SessionStats()
         self.session_start = self.stats.session_start
 
@@ -163,17 +167,19 @@ class BenjiApplication:
         self.transcribe_queue = Queue(maxsize=3)
         self.display_queue = Queue(maxsize=10)
 
-        self.capture = AudioCapture(self.audio_queue, self.cfg.audio)
-        self.vad = VADProcessor(
-            self.audio_queue, self.transcribe_queue, self.cfg.audio, self.cfg.vad,
-            self.display_queue, stats=self.stats,
-        )
+        self.capture = AudioCapture(self.audio_queue, self.cfg.audio, stats=self.stats)
+        if not self.remote_mode:
+            # En mode remote le VAD n'est jamais démarré : inutile de charger
+            # le modèle Silero ONNX (fait dans VADProcessor.__init__).
+            self.vad = VADProcessor(
+                self.audio_queue, self.transcribe_queue, self.cfg.audio, self.cfg.vad,
+                self.display_queue, stats=self.stats,
+            )
         log.info("Starting...")
 
     def _create_qapp(self) -> None:
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Benji")
-        self.remote_mode = self.cfg.stt.stt_provider == "remote"
 
     def _show_splash(self) -> SplashWindow:
         # Load Whisper on a background thread so the UI stays responsive and the
@@ -198,6 +204,8 @@ class BenjiApplication:
             self.remote_stt = build_remote_stt_client(
                 self.audio_queue, self.display_queue, self.history,
                 self.cfg.stt, self.cfg.llm, sample_rate=self.cfg.audio.sample_rate,
+                # Rafraîchi à chaque (re)connexion : l'access token expire en 15 min.
+                token_provider=self.session.access_token if self.session else None,
             )
             splash.set_status("Démarrage de la capture audio…")
             self.app.processEvents()

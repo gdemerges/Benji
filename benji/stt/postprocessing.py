@@ -54,18 +54,21 @@ def postprocess_text(text: str, language: str = None) -> str:
     if not text or not text.strip():
         return text
 
-    # Remove common hesitations/fillers
+    # Remove common hesitations/fillers.
+    # NB: pas de « eh/ah/oh » ici — mots légitimes en français (« eh bien »,
+    # « ah bon »).
     hesitations = [
         r'\b(euh|euuh|heu|heuu)\b',  # French
         r'\b(uh|uhh|um|umm|hmm|huh)\b',  # English
-        r'\b(eh|ah|oh)\b',  # General
     ]
     for pattern in hesitations:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
 
     # Fix spacing around punctuation
     text = re.sub(r'\s+([,.!?;:])', r'\1', text)  # Remove space before punctuation
-    text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)  # Add space after punctuation
+    # Add space after punctuation — sauf entre deux chiffres, pour ne pas
+    # casser les nombres (« 2,5 », « 3.14 »).
+    text = re.sub(r'((?<!\d)[,.!?;:]|[,.!?;:](?!\d))\s*', r'\1 ', text)
 
     # Fix French apostrophes (e.g., "qu ' on" -> "qu'on")
     text = re.sub(r"([a-z])\s*'\s*([a-z])", r"\1'\2", text, flags=re.IGNORECASE)
@@ -74,6 +77,10 @@ def postprocess_text(text: str, language: str = None) -> str:
     text = re.sub(r"([a-z])\s*-\s*([a-z])", r"\1-\2", text, flags=re.IGNORECASE)
 
     text = re.sub(r'\s+', ' ', text)  # Remove multiple spaces
+
+    # Ponctuation orpheline en tête après suppression d'une hésitation
+    # (« Euh, oui » → « , oui ») : on la retire avant de capitaliser.
+    text = re.sub(r'^[\s,;:]+', '', text)
 
     # Capitalize first letter
     text = text.strip()
