@@ -16,6 +16,8 @@ macOS real-time transcription app. Pipeline: mic → VAD → STT → subtitle ov
 
 Le suivi de ce projet est documenté dans : `/Users/guillaumedemerges/Documents/Life/wiki/projects/Benji`
 
+Notes du vault : `Benji.md` (fiche principale, état d'avancement) + `Benji-Architecture.md`, `Benji-Backend-Cloud.md`, `Benji-Distribution.md`.
+
 **Règle** : à la fin d'une session de travail significative (feature terminée, architecture changée, checklist publication avancée), mets à jour la note concernée avec les changements. Garde le format existant (frontmatter, sections, checkboxes cochées/décochées).
 
 ## Modules
