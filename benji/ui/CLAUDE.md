@@ -2,14 +2,14 @@
 
 - `overlay.py` — fenêtre sous-titres always-on-top, click-through sur macOS via `NSWindow` level. Consomme les events via le signal `DisplayBus.event` (le `DisplayBus` draine `display_queue` avec un `QTimer` central) — ne doit jamais bloquer la boucle Qt. Sticky-across-Spaces réasserté sur `NSWorkspaceActiveSpaceDidChangeNotification` (+ timer de secours 2 s). Multi-écrans : suit l'écran sous le curseur (`UIConfig.follow_active_screen`), réévalué à chaque `segment_start`.
 - `main_window.py` — fenêtre principale (toolbar + 2 onglets Live/Résumés), style macOS natif (vibrancy + palette adaptive). Bouton pause micro dans la toolbar (`on_toggle_pause`), état reflété par le `StatusPill` (« Micro en pause »).
-- `live_tab.py` — onglet Live : `QScrollArea` avec `ChatItem` widgets + `PartialBubble` flottant.
+- `live_tab.py` — onglet Live : transcript **style document** (pas de cartes) : regroupement par prise de parole (en-tête ● Nom une fois par groupe, timestamp en gouttière au changement de minute), état vide « Benji écoute » (l'onde réagit au VAD), ligne partielle en bas. Une correction LLM (`corrected` + `seq`) **remplace** la ligne d'origine (fenêtre bornée `_MAX_CORRECTABLE`), jamais de doublon. Largeur de lecture 720px.
 - `summaries_tab.py` — onglet Résumés : liste groupée par jour + preview markdown stylée.
 - `tray.py` — icône menu bar macOS (Suspendre/Reprendre le micro / Quit / History / Live Summary ; + section compte pilotée par `benji.account.Session` : Se connecter… / Passer Pro… / Gérer l'abonnement… / Se déconnecter, reconstruite à chaque ouverture via `aboutToShow`)
 - `login_dialog.py` — dialogue modal de connexion/inscription (email + mot de passe) câblé à `Session`
 - `history_window.py` — log scrollable + stats de session. Boutons **Copier** (txt → presse-papiers), **Exporter…** (menu txt/md/srt → `QFileDialog`, via `benji.export`) et **Locuteurs…** (dialogue de renommage des labels de diarisation, appliqué au rendu). Restylé via les helpers de `style.py` (fond dégradé, panneau texte carte, boutons primaire/secondaire), thème rechargé au changement système.
 - `live_summary_window.py` — résumé LLM glissant, restylé via les helpers de `style.py` (fond adaptive + panneau texte).
 - `style.py` — palette adaptive light/dark, helpers QSS, vibrancy macOS (`NSVisualEffectView`). Source de vérité pour les couleurs / fonts. Helpers partagés : `panel_background_qss`, `text_panel_qss`, `primary_button_qss`, `secondary_button_qss` (scoper le fond via un `objectName` pour éviter la cascade sur les enfants).
-- `widgets/` — widgets custom : `StatusPill`, `SegmentedControl`, `ChatItem`, `PartialBubble`, `SummaryItem`, `PendingItem`, `icons` (SVG → QIcon).
+- `widgets/` — widgets custom : `StatusPill`, `SegmentedControl`, `ChatItem`, `PartialBubble`, `SummaryItem`, `PendingItem`, `icons` (SVG → QIcon), `waveform.py` (**élément signature** : mini forme d'onde 5 barres `WaveformDot`, animée quand la voix est détectée — utilisée dans le StatusPill, la ligne partielle, l'état vide du Live et l'overlay ; timer actif uniquement pendant l'animation).
 
 Raccourcis clavier (attachés à l'overlay) : Ctrl+Shift+H (history), Ctrl+Shift+S (summary), Ctrl+Shift+D (debug macOS).
 
