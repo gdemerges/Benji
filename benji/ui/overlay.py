@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from benji.config import IS_MACOS, IS_WINDOWS, UIConfig
 from benji.ui.style import speaker_color
+from benji.ui.widgets.waveform import WaveformDot
 
 log = logging.getLogger(__name__)
 
@@ -59,26 +60,19 @@ def _space_observer_class():
     return _space_observer_cls
 
 
-class VADIndicator(QWidget):
-    """Visual indicator for VAD status (speaking/silent)."""
+class VADIndicator(WaveformDot):
+    """Forme d'onde signature en haut de l'overlay : danse quand la voix est
+    détectée, quasi invisible sinon (repos discret plutôt que rond vert)."""
+
     def __init__(self, parent=None):
-        super().__init__(parent)
+        super().__init__(bar_width=2, gap=2, height=12, parent=parent)
+        self.set_color(QColor(255, 255, 255, 170))
         self.is_speaking = False
-        self.setFixedSize(12, 12)
 
     def set_speaking(self, speaking: bool):
         self.is_speaking = speaking
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Draw circle
-        color = QColor(0, 255, 0, 200) if self.is_speaking else QColor(128, 128, 128, 100)
-        painter.setBrush(color)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(0, 0, 12, 12)
+        self.set_color(QColor(255, 255, 255, 220 if speaking else 70))
+        self.set_active(speaking)
 
 
 class SubtitleOverlay(QWidget):
@@ -187,15 +181,16 @@ class SubtitleOverlay(QWidget):
 
     def _apply_label_style(self):
         """(Re)applique police + fond depuis self.config au label de sous-titres."""
+        # DemiBold plutôt que Bold : aussi lisible sur fond sombre, moins criard.
         self.label.setFont(
-            QFont(self.config.font_family, self.config.font_size, QFont.Weight.Bold)
+            QFont(self.config.font_family, self.config.font_size, QFont.Weight.DemiBold)
         )
         self.label.setStyleSheet(f"""
             QLabel {{
-                color: white;
-                padding: 12px 24px;
+                color: rgba(255, 255, 255, 242);
+                padding: 14px 26px;
                 background-color: rgba(0, 0, 0, {self.config.bg_opacity});
-                border-radius: 12px;
+                border-radius: 14px;
             }}
         """)
 

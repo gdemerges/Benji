@@ -1,65 +1,14 @@
-"""Pill statut : dot pulsant + label + timer session."""
+"""Pill statut : forme d'onde signature + label + timer session."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import (
-    QEasingCurve,
-    QPropertyAnimation,
-    Qt,
-    QTimer,
-    pyqtProperty,
-)
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from benji.ui.style import FONT_MONO, FONT_UI, current_theme
-
-
-class _PulseDot(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(10, 10)
-        self._color = QColor(150, 150, 150)
-        self._opacity = 1.0
-        self._anim = QPropertyAnimation(self, b"opacity_prop")
-        self._anim.setDuration(1200)
-        self._anim.setStartValue(1.0)
-        self._anim.setKeyValueAt(0.5, 0.35)
-        self._anim.setEndValue(1.0)
-        self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-        self._anim.setLoopCount(-1)
-
-    def set_color(self, color: QColor) -> None:
-        self._color = color
-        self.update()
-
-    def set_pulsing(self, on: bool) -> None:
-        if on:
-            self._anim.start()
-        else:
-            self._anim.stop()
-            self._opacity = 1.0
-            self.update()
-
-    def _get_opacity(self) -> float:
-        return self._opacity
-
-    def _set_opacity(self, v: float) -> None:
-        self._opacity = v
-        self.update()
-
-    opacity_prop = pyqtProperty(float, fget=_get_opacity, fset=_set_opacity)
-
-    def paintEvent(self, _e) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        c = QColor(self._color)
-        c.setAlphaF(self._opacity)
-        p.setBrush(c)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(1, 1, 8, 8)
+from benji.ui.widgets.waveform import WaveformDot
 
 
 class StatusPill(QWidget):
@@ -69,7 +18,7 @@ class StatusPill(QWidget):
         self._speaking = False
         self._paused = False
 
-        self.dot = _PulseDot(self)
+        self.wave = WaveformDot(bar_width=2, gap=2, height=12)
         self.status_label = QLabel("En attente")
         self.sep_label = QLabel(" · ")
         self.timer_label = QLabel("00:00")
@@ -77,7 +26,7 @@ class StatusPill(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 4, 12, 4)
         layout.setSpacing(6)
-        layout.addWidget(self.dot)
+        layout.addWidget(self.wave)
         layout.addSpacing(2)
         layout.addWidget(self.status_label)
         layout.addWidget(self.sep_label)
@@ -110,7 +59,7 @@ class StatusPill(QWidget):
             f"color: rgba({t.tertiary_label.red()},{t.tertiary_label.green()},{t.tertiary_label.blue()},{t.tertiary_label.alpha()}); "
             "background: transparent;"
         )
-        self._refresh_dot_color()
+        self._refresh_wave()
 
     def set_speaking(self, speaking: bool) -> None:
         if speaking == self._speaking:
@@ -132,15 +81,15 @@ class StatusPill(QWidget):
             self.status_label.setText("Micro en pause")
         else:
             self.status_label.setText("En écoute" if self._speaking else "En attente")
-        self._refresh_dot_color()
-        self.dot.set_pulsing(self._speaking and not self._paused)
+        self._refresh_wave()
 
-    def _refresh_dot_color(self) -> None:
+    def _refresh_wave(self) -> None:
         t = current_theme()
         if self._paused:
-            self.dot.set_color(t.quaternary_label)
+            self.wave.set_color(t.quaternary_label)
         else:
-            self.dot.set_color(t.live_red if self._speaking else t.tertiary_label)
+            self.wave.set_color(t.live_red if self._speaking else t.tertiary_label)
+        self.wave.set_active(self._speaking and not self._paused)
 
     def _tick(self) -> None:
         delta: timedelta = datetime.now() - self._session_start
