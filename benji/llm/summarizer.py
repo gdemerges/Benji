@@ -134,10 +134,12 @@ def save_summary(summary: str) -> Path:
     filename = f"summary_{timestamp.strftime('%Y%m%d_%H%M%S')}.md"
     file_path = cache_dir / filename
 
-    with open(file_path, "w", encoding="utf-8") as f:
+    # Mode 0600 dès la création (un write-puis-chmod laisserait le résumé
+    # lisible par tous entre les deux appels).
+    fd = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(f"# Résumé de session — {timestamp.strftime('%d/%m/%Y %H:%M')}\n\n")
         f.write(summary)
         f.write("\n")
-    os.chmod(file_path, 0o600)
 
     return file_path
