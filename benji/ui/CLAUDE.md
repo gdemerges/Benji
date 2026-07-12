@@ -6,9 +6,9 @@
 - `summaries_tab.py` — onglet Résumés : liste groupée par jour + preview markdown stylée.
 - `tray.py` — icône menu bar macOS (Suspendre/Reprendre le micro / Quit / History / Live Summary ; + section compte pilotée par `benji.account.Session` : Se connecter… / Passer Pro… / Gérer l'abonnement… / Se déconnecter, reconstruite à chaque ouverture via `aboutToShow`)
 - `login_dialog.py` — dialogue modal de connexion/inscription (email + mot de passe) câblé à `Session`
-- `history_window.py` — log scrollable + stats de session (héritage). Boutons **Copier** (txt → presse-papiers), **Exporter…** (menu txt/md/srt → `QFileDialog`, via `benji.export`) et **Locuteurs…** (dialogue de renommage des labels de diarisation, appliqué au rendu)
-- `live_summary_window.py` — résumé LLM glissant (héritage, non touché)
-- `style.py` — palette adaptive light/dark, helpers QSS, vibrancy macOS (`NSVisualEffectView`). Source de vérité pour les couleurs / fonts.
+- `history_window.py` — log scrollable + stats de session. Boutons **Copier** (txt → presse-papiers), **Exporter…** (menu txt/md/srt → `QFileDialog`, via `benji.export`) et **Locuteurs…** (dialogue de renommage des labels de diarisation, appliqué au rendu). Restylé via les helpers de `style.py` (fond dégradé, panneau texte carte, boutons primaire/secondaire), thème rechargé au changement système.
+- `live_summary_window.py` — résumé LLM glissant, restylé via les helpers de `style.py` (fond adaptive + panneau texte).
+- `style.py` — palette adaptive light/dark, helpers QSS, vibrancy macOS (`NSVisualEffectView`). Source de vérité pour les couleurs / fonts. Helpers partagés : `panel_background_qss`, `text_panel_qss`, `primary_button_qss`, `secondary_button_qss` (scoper le fond via un `objectName` pour éviter la cascade sur les enfants).
 - `widgets/` — widgets custom : `StatusPill`, `SegmentedControl`, `ChatItem`, `PartialBubble`, `SummaryItem`, `PendingItem`, `icons` (SVG → QIcon).
 
 Raccourcis clavier (attachés à l'overlay) : Ctrl+Shift+H (history), Ctrl+Shift+S (summary), Ctrl+Shift+D (debug macOS).

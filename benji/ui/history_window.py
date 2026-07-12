@@ -23,6 +23,15 @@ from PyQt6.QtWidgets import (
 from benji import export
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
+from benji.ui.style import (
+    FONT_MONO,
+    current_theme,
+    install_theme_listener,
+    panel_background_qss,
+    primary_button_qss,
+    secondary_button_qss,
+    text_panel_qss,
+)
 
 _EXPORT_FORMATS = [
     ("Texte (.txt)", "txt", "Fichier texte (*.txt)"),
@@ -42,25 +51,29 @@ class HistoryWindow(QWidget):
         self.stats = stats
         self._entries: list[dict] = []
         self._speaker_names: dict[str, str] = {}
-        self.setWindowTitle("Transcription History")
+        self.setObjectName("HistoryWindow")
+        self.setWindowTitle("Historique")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.resize(600, 400)
+        self.resize(640, 460)
 
         # Layout
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
 
         # Text area
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("monospace", 10))
+        self.text_edit.setFont(QFont(FONT_MONO, 12))
         layout.addWidget(self.text_edit)
 
         # Buttons
         button_layout = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.load_history)
-        clear_btn = QPushButton("Clear History")
-        clear_btn.clicked.connect(self.clear_history)
+        button_layout.setSpacing(8)
+        self.refresh_btn = QPushButton("Actualiser")
+        self.refresh_btn.clicked.connect(self.load_history)
+        self.clear_btn = QPushButton("Effacer")
+        self.clear_btn.clicked.connect(self.clear_history)
         self.copy_btn = QPushButton("Copier")
         self.copy_btn.clicked.connect(self._copy_to_clipboard)
         self.export_btn = QPushButton("Exporter…")
@@ -69,22 +82,28 @@ class HistoryWindow(QWidget):
         self.speakers_btn.clicked.connect(self._rename_speakers)
         self.summarize_btn = QPushButton("Résumer la session")
         self.summarize_btn.clicked.connect(self._start_summarize)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.close)
+        self.close_btn = QPushButton("Fermer")
+        self.close_btn.clicked.connect(self.close)
 
-        button_layout.addWidget(refresh_btn)
-        button_layout.addWidget(clear_btn)
-        button_layout.addWidget(self.copy_btn)
-        button_layout.addWidget(self.export_btn)
-        button_layout.addWidget(self.speakers_btn)
+        # Boutons secondaires (discrets) et principal (accent).
+        self._secondary_buttons = [
+            self.refresh_btn,
+            self.clear_btn,
+            self.copy_btn,
+            self.export_btn,
+            self.speakers_btn,
+            self.close_btn,
+        ]
+        for btn in (self.refresh_btn, self.clear_btn, self.copy_btn,
+                    self.export_btn, self.speakers_btn):
+            button_layout.addWidget(btn)
         button_layout.addWidget(self.summarize_btn)
         button_layout.addStretch()
-        button_layout.addWidget(close_btn)
+        button_layout.addWidget(self.close_btn)
         layout.addLayout(button_layout)
 
         # Stats footer (updated every 2s)
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
         layout.addWidget(self.stats_label)
 
         self.setLayout(layout)
@@ -97,7 +116,24 @@ class HistoryWindow(QWidget):
         self._summary_ready.connect(self._on_summary_ready)
         self._summary_error.connect(self._on_summary_error)
 
+        install_theme_listener(self._apply_theme)
+        self._apply_theme()
+
         self.load_history()
+
+    def _apply_theme(self) -> None:
+        t = current_theme()
+        self.setStyleSheet(
+            panel_background_qss(t, "#HistoryWindow") + text_panel_qss(t)
+        )
+        for btn in self._secondary_buttons:
+            btn.setStyleSheet(secondary_button_qss(t))
+        self.summarize_btn.setStyleSheet(primary_button_qss(t))
+        self.stats_label.setStyleSheet(
+            f"color: rgba({t.secondary_label.red()},{t.secondary_label.green()},"
+            f"{t.secondary_label.blue()},{t.secondary_label.alpha()}); "
+            "font-size: 11px; padding: 2px 4px;"
+        )
 
     def _start_summarize(self):
         self.summarize_btn.setEnabled(False)

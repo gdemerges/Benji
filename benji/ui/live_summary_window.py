@@ -9,6 +9,14 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
+from benji.ui.style import (
+    FONT_MONO,
+    current_theme,
+    install_theme_listener,
+    panel_background_qss,
+    text_panel_qss,
+)
+
 
 class LiveSummaryWindow(QWidget):
     _summary_signal = pyqtSignal(str, object)  # (text, datetime)
@@ -17,14 +25,16 @@ class LiveSummaryWindow(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("LiveSummaryWindow")
         self.setWindowTitle("Résumé en direct")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.resize(500, 400)
+        self.resize(520, 420)
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("monospace", 10))
+        self.text_edit.setFont(QFont(FONT_MONO, 12))
         self.text_edit.setPlainText("En attente du premier résumé…")
         layout.addWidget(self.text_edit)
         self.setLayout(layout)
@@ -34,6 +44,15 @@ class LiveSummaryWindow(QWidget):
         self._summary_signal.connect(self._finalize_summary)
         self._start_signal.connect(self._begin_summary)
         self._chunk_signal.connect(self._append_chunk)
+
+        install_theme_listener(self._apply_theme)
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        t = current_theme()
+        self.setStyleSheet(
+            panel_background_qss(t, "#LiveSummaryWindow") + text_panel_qss(t)
+        )
 
     # --- Thread-safe entry points ---------------------------------------
     def on_summary(self, text: str, at: datetime):
