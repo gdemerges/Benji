@@ -6,7 +6,7 @@
 - `summaries_tab.py` — onglet Résumés : liste groupée par jour + preview markdown stylée.
 - `tray.py` — icône menu bar macOS (Suspendre/Reprendre le micro / Quit / History / Live Summary ; + section compte pilotée par `benji.account.Session` : Se connecter… / Passer Pro… / Gérer l'abonnement… / Se déconnecter, reconstruite à chaque ouverture via `aboutToShow`)
 - `login_dialog.py` — dialogue modal de connexion/inscription (email + mot de passe) câblé à `Session`
-- `history_window.py` — log scrollable + stats de session (héritage, non touché par le polish 2026-05-27)
+- `history_window.py` — log scrollable + stats de session (héritage). Boutons **Copier** (txt → presse-papiers), **Exporter…** (menu txt/md/srt → `QFileDialog`, via `benji.export`) et **Locuteurs…** (dialogue de renommage des labels de diarisation, appliqué au rendu)
 - `live_summary_window.py` — résumé LLM glissant (héritage, non touché)
 - `style.py` — palette adaptive light/dark, helpers QSS, vibrancy macOS (`NSVisualEffectView`). Source de vérité pour les couleurs / fonts.
 - `widgets/` — widgets custom : `StatusPill`, `SegmentedControl`, `ChatItem`, `PartialBubble`, `SummaryItem`, `PendingItem`, `icons` (SVG → QIcon).
