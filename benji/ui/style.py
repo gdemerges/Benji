@@ -121,6 +121,92 @@ FONT_DISPLAY = '"-apple-system", "SF Pro Display", "SF Pro Text", system-ui, san
 FONT_MONO = '"SF Mono", Menlo, monospace'
 
 
+def _rgba(color: QColor) -> str:
+    return f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"
+
+
+def _rgb(color: QColor) -> str:
+    return f"rgb({color.red()},{color.green()},{color.blue()})"
+
+
+# --- QSS helpers partagés (source de vérité pour le look des fenêtres) --------
+# Utilisés par les fenêtres héritées (history / live summary) pour rester
+# cohérentes avec `main_window`, sans dupliquer les couleurs en dur.
+
+
+def panel_background_qss(theme: Theme, selector: str = "QWidget") -> str:
+    """Dégradé de fond vertical subtil, identique à la fenêtre principale."""
+    bg = theme.window_background
+    delta = 6 if theme.is_dark else 5
+    top = bg.lighter(100 + delta)
+    bottom = bg.darker(100 + delta)
+    return f"""
+    {selector} {{
+        background-color: qlineargradient(
+            x1:0, y1:0, x2:0, y2:1,
+            stop:0 {_rgb(top)}, stop:1 {_rgb(bottom)}
+        );
+    }}"""
+
+
+def text_panel_qss(theme: Theme) -> str:
+    """QTextEdit en lecture : fond carte adaptive, texte label, coins arrondis."""
+    card = theme.label_alpha(4)
+    return f"""
+    QTextEdit {{
+        font-family: {FONT_MONO};
+        font-size: 12px;
+        color: {_rgba(theme.label)};
+        background-color: {_rgba(card)};
+        border: 1px solid {_rgba(theme.separator)};
+        border-radius: 8px;
+        padding: 10px;
+        selection-background-color: {_rgba(theme.accent_alpha(40))};
+        selection-color: {_rgba(theme.label)};
+    }}"""
+
+
+def primary_button_qss(theme: Theme) -> str:
+    """Bouton d'action principal : rempli à la couleur d'accentuation."""
+    accent = theme.accent
+    return f"""
+    QPushButton {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        font-weight: 500;
+        color: #ffffff;
+        background-color: {_rgb(accent)};
+        border: none;
+        padding: 6px 14px;
+        border-radius: 6px;
+    }}
+    QPushButton:hover {{ background-color: {_rgba(theme.accent_alpha(86))}; }}
+    QPushButton:disabled {{
+        background-color: {_rgba(theme.accent_alpha(35))};
+        color: rgba(255,255,255,160);
+    }}"""
+
+
+def secondary_button_qss(theme: Theme) -> str:
+    """Bouton secondaire : rempli discret, teinte label, hover plus marqué."""
+    label = theme.label
+    fill = theme.label_alpha(7)
+    hover = theme.label_alpha(13)
+    return f"""
+    QPushButton {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        font-weight: 500;
+        color: {_rgba(label)};
+        background-color: {_rgba(fill)};
+        border: none;
+        padding: 6px 12px;
+        border-radius: 6px;
+    }}
+    QPushButton:hover {{ background-color: {_rgba(hover)}; }}
+    QPushButton:disabled {{ color: {_rgba(theme.tertiary_label)}; background-color: {_rgba(theme.label_alpha(4))}; }}"""
+
+
 def apply_window_vibrancy(window: QWidget) -> bool:
     """macOS vibrancy via NSVisualEffectView en remplaçant la contentView.
 
