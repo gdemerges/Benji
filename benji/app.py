@@ -32,6 +32,7 @@ from benji.config import (
     STTConfig,
     UIConfig,
     VADConfig,
+    ensure_secure_backend_url,
 )
 from benji.launch_mode import launch_mode
 from benji.llm.providers import build_summary_provider
@@ -144,6 +145,9 @@ class BenjiApplication:
 
         self.user_settings = UserSettings()
         self.user_settings.hydrate(stt=self.cfg.stt, ui=self.cfg.ui, llm=self.cfg.llm)
+        # Point de passage unique : session, providers, STT distant et billing
+        # lisent tous cfg.llm.backend_url — valider ici couvre tout le monde.
+        ensure_secure_backend_url(self.cfg.llm.backend_url)
 
     def _build_account(self) -> None:
         # Compte Benji : si une session est enregistrée, on injecte son access

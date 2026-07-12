@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -130,8 +131,11 @@ class CredentialStore:
 
     def _save_file(self, data: dict) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(data), encoding="utf-8")
-        self._path.chmod(0o600)
+        # Mode 0600 dès la création : un write-puis-chmod laisserait le jeton
+        # lisible par tous entre les deux appels (umask par défaut).
+        fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data))
 
 
 class AuthClient:

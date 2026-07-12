@@ -19,9 +19,11 @@ class TranscriptionHistory:
         }
         if speaker:
             entry["speaker"] = speaker
-        with open(self.history_file, "a", encoding="utf-8") as f:
+        # Mode 0600 dès la création (un write-puis-chmod laisserait la
+        # transcription lisible par tous entre les deux appels).
+        fd = os.open(self.history_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        os.chmod(self.history_file, 0o600)
         self._trim_if_needed()
 
     def _trim_if_needed(self):

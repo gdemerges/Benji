@@ -113,6 +113,32 @@ class LLMConfig:
     summary_model_alias: str = "haiku"        # alias logique envoyé au backend
 
 
+_LOCAL_HOSTS = {"localhost", "::1"}
+
+
+def ensure_secure_backend_url(url: str) -> str:
+    """Valide que l'URL backend est en HTTPS dès qu'elle sort du poste.
+
+    Par ce canal transitent identifiants, jetons Bearer et transcriptions :
+    en clair (http/ws), une URL de prod mal saisie exposerait tout. Seul le
+    loopback (dev local) est exempté. Lève ValueError sinon — on échoue au
+    démarrage plutôt que de fuiter silencieusement.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL backend invalide (schéma {parsed.scheme!r}) : {url}")
+    host = parsed.hostname or ""
+    is_local = host in _LOCAL_HOSTS or host.startswith("127.")
+    if parsed.scheme == "http" and not is_local:
+        raise ValueError(
+            f"URL backend non locale en HTTP refusée (jetons et transcriptions "
+            f"transiteraient en clair) : {url} — utilise https://"
+        )
+    return url
+
+
 @dataclass
 class UIConfig:
     font_family: str = field(default_factory=_default_font)

@@ -106,6 +106,9 @@ class PyannoteSpeakerTagger:
         max_speakers: int = 4,
         cosine_threshold: float = 0.55,
         model_id: str = "pyannote/embedding",
+        # Commit épinglé du repo HF : un repo compromis ne peut pas substituer
+        # des poids modifiés (les checkpoints torch peuvent exécuter du code).
+        model_revision: str = "4db4899737a38b2d618bbd74350915aa10293cb2",
     ):
         try:
             from pyannote.audio import Inference, Model
@@ -121,7 +124,7 @@ class PyannoteSpeakerTagger:
 
         # pyannote 4.x: load the Model (auth via `token`) then wrap it in Inference.
         # `whole` averages embeddings across the full clip — what we want per segment.
-        model = Model.from_pretrained(model_id, token=token)
+        model = Model.from_pretrained(model_id, revision=model_revision, token=token)
         self._inference = Inference(model, window="whole")
         self.max_speakers = max_speakers
         self.cosine_threshold = cosine_threshold
