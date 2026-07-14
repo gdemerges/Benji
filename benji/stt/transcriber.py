@@ -266,7 +266,9 @@ class Transcriber:
         else:
             # Replace the streamed (raw) overlay text with the post-processed one.
             self._emit_final(full_text, speaker)
-            log.info('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
+            # DEBUG et pas INFO : le log est persisté sur disque et joint aux
+            # rapports de bug — le contenu transcrit ne doit pas y fuiter.
+            log.debug('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
             self.history.add(full_text, speaker=speaker)
 
         # Update sliding context from the raw (pre-label) words
@@ -337,7 +339,7 @@ class Transcriber:
                 log.warning("LLM correction skipped: %s", e)
                 corrected = text
             self.history.add(corrected, speaker=speaker)
-            log.info('%s"%s"', f"[{speaker}] " if speaker else "", corrected)
+            log.debug('%s"%s"', f"[{speaker}] " if speaker else "", corrected)
             self._emit_final(corrected, speaker, seq=seq, corrected=True)
 
     def run(self):

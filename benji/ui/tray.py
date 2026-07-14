@@ -1,14 +1,54 @@
 """Menu-bar tray icon: Quit / Show History / account & Stripe billing."""
 
 import logging
+import subprocess
+import sys
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from benji.logging_config import log_dir, log_file_path
+from benji.report import build_mailto_url
 from benji.ui.account_controller import AccountController
 
 log = logging.getLogger(__name__)
+
+
+def report_problem(stats=None, stt_config=None) -> None:
+    """Ouvre un brouillon de mail prérempli et révèle le log dans le Finder.
+
+    Un `mailto:` ne peut pas porter de pièce jointe : les métriques (anonymes)
+    partent dans le corps, et le log est révélé pour que l'utilisateur le joigne
+    lui-même — il voit ainsi exactement ce qu'il envoie.
+    """
+    path = log_file_path()
+    url = build_mailto_url(
+        stats_snapshot=stats.snapshot() if stats is not None else None,
+        stt_config=stt_config,
+        log_path=str(path) if path.exists() else None,
+    )
+    QDesktopServices.openUrl(QUrl(url))
+    if path.exists():
+        reveal_logs()
+
+
+def reveal_logs() -> None:
+    """Montre le log dans le Finder — le seul canal de diag d'une app bundlée.
+
+    `open -R` sélectionne le fichier dans son dossier ; si le handler fichier
+    n'a pas pu être créé, on se rabat sur l'ouverture du dossier.
+    """
+    path = log_file_path()
+    if sys.platform == "darwin" and path.exists():
+        try:
+            subprocess.run(["open", "-R", str(path)], check=True)
+            return
+        except (OSError, subprocess.CalledProcessError) as e:
+            log.warning("Could not reveal log file: %s", e)
+
+    target = path.parent if path.exists() else log_dir()
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
 
 def _make_icon() -> QIcon:
@@ -65,6 +105,8 @@ def build_tray(
     open_preferences=None,
     toggle_pause=None,
     is_paused=None,
+    stats=None,
+    stt_config=None,
 ) -> QSystemTrayIcon:
     """show_main_window: callable() — when present, adds an 'Afficher fenêtre' item
     that invokes this callback. The caller is expected to route through the
@@ -77,6 +119,9 @@ def build_tray(
     toggle_pause: callable() -> bool — bascule la pause micro et retourne le
     nouvel état. is_paused: callable() -> bool — état courant, relu à chaque
     ouverture du menu (la pause peut aussi être basculée depuis la fenêtre).
+
+    stats: benji.stats.SessionStats — joint les métriques (anonymes) au rapport
+    de bug. stt_config: STTConfig — y joint la config du moteur.
     """
     tray = QSystemTrayIcon(_make_icon())
     tray.setToolTip("Benji — live subtitles")
@@ -112,6 +157,16 @@ def build_tray(
         prefs = QAction("Préférences…", menu)
         prefs.triggered.connect(open_preferences)
         menu.addAction(prefs)
+
+    # Dans le tronc commun (avant la section compte) : `_rebuild` ne recycle que
+    # les actions situées après `trunk`.
+    report = QAction("Signaler un problème…", menu)
+    report.triggered.connect(lambda: report_problem(stats=stats, stt_config=stt_config))
+    menu.addAction(report)
+
+    reveal = QAction("Révéler les logs", menu)
+    reveal.triggered.connect(reveal_logs)
+    menu.addAction(reveal)
 
     if session is not None:
         def _notify(title: str, msg: str) -> None:

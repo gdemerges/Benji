@@ -10,8 +10,10 @@ import logging
 import platform
 
 from benji.logging_config import setup_logging
+from benji.monitoring import init_sentry
 
 setup_logging()
+init_sentry()  # no-op sans BENJI_SENTRY_DSN
 log = logging.getLogger(__name__)
 
 

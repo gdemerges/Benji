@@ -44,6 +44,10 @@ cloud = [
     # Transcription via le backend Benji (STTConfig.stt_provider = "remote").
     "websockets>=12",
 ]
+monitoring = [
+    # Remontée des crashs (benji/monitoring.py). Inactif sans BENJI_SENTRY_DSN.
+    "sentry-sdk>=2.0",
+]
 
 [project.scripts]
 benji = "benji.main:main"

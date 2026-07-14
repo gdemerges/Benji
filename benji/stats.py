@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from collections import Counter, deque
 from datetime import datetime
@@ -45,11 +46,14 @@ class SessionStats:
 
     @staticmethod
     def _percentiles(values: deque[float]) -> tuple[float, float]:
+        # Rang le plus proche : index = ceil(p × n) - 1. Avec `int()` au lieu de
+        # `ceil()`, le p95 tombait d'un cran (un p80 sur 5 échantillons) et
+        # masquait justement les pires latences — celles qu'on veut voir.
         s = sorted(values)
         n = len(s)
         if n == 0:
             return 0.0, 0.0
-        return s[n // 2], s[max(0, int(n * 0.95) - 1)]
+        return s[n // 2], s[max(0, math.ceil(n * 0.95) - 1)]
 
     def snapshot(self) -> dict:
         with self._lock:
