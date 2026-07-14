@@ -11,6 +11,7 @@ dependencies = [
     "websockets>=12",  # client streaming STT (Deepgram / Grok)
     "pyjwt>=2.8",      # jetons d'accès/refresh (HS256)
     "stripe>=9",       # Checkout Session + Billing Portal (facturation)
+    "sentry-sdk[fastapi]>=2.0",  # remontée des crashs ; inactif sans SENTRY_DSN
 ]
 
 [dependency-groups]

@@ -6,6 +6,11 @@ handler emits a short, colorized-friendly format that mirrors the legacy
 
 Verbosity is controlled by env var `BENJI_LOG_LEVEL` (default INFO). Set to
 DEBUG for verbose troubleshooting, WARNING to silence routine messages.
+
+Deux handlers : stderr (dev) et un fichier tournant dans `log_dir()`. Lancée
+depuis le Finder, l'app n'a pas de terminal attaché — stderr part au néant, et
+le fichier est alors le *seul* canal de diagnostic (cf. « Révéler les logs »
+dans le menu tray). Il porte donc un format plus riche : horodatage + niveau.
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 _TAG_BY_MODULE = {
     "benji.main": "Benji",
@@ -38,6 +45,40 @@ class _TagFormatter(logging.Formatter):
 
 _configured = False
 
+_MAX_BYTES = 2 * 1024 * 1024
+_BACKUP_COUNT = 3
+
+
+def log_dir() -> Path:
+    """Dossier des logs. `~/Library/Logs/Benji` sur macOS, sinon repli XDG."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "Benji"
+    base = os.environ.get("XDG_STATE_HOME")
+    return (Path(base) if base else Path.home() / ".local" / "state") / "benji"
+
+
+def log_file_path() -> Path:
+    return log_dir() / "benji.log"
+
+
+def _build_file_handler() -> logging.Handler | None:
+    """RotatingFileHandler sur `log_file_path()`, ou None si le disque refuse.
+
+    Un log qu'on n'arrive pas à écrire ne doit jamais empêcher l'app de démarrer.
+    """
+    try:
+        path = log_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            path, maxBytes=_MAX_BYTES, backupCount=_BACKUP_COUNT, encoding="utf-8"
+        )
+    except OSError:
+        return None
+    handler.setFormatter(
+        _TagFormatter("%(asctime)s %(levelname)-7s [%(tag)s] %(message)s")
+    )
+    return handler
+
 
 def setup_logging(level: str | None = None) -> None:
     """Configure the root `benji` logger. Idempotent."""
@@ -54,4 +95,12 @@ def setup_logging(level: str | None = None) -> None:
     root = logging.getLogger("benji")
     root.setLevel(resolved)
     root.addHandler(handler)
+
+    file_handler = _build_file_handler()
+    if file_handler is not None:
+        root.addHandler(file_handler)
+
     root.propagate = False
+
+    if file_handler is None:
+        root.warning("Could not open log file at %s — stderr only", log_file_path())

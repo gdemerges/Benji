@@ -11,9 +11,11 @@ import logging
 from fastapi import FastAPI
 
 from app.errors import ApiError, api_error_handler
+from app.monitoring import init_sentry
 from app.routers import account, auth, billing, history, summary, transcribe
 
 logging.basicConfig(level=logging.INFO)
+init_sentry()  # no-op sans SENTRY_DSN
 
 app = FastAPI(title="Benji backend", version="0.1.0")
 app.add_exception_handler(ApiError, api_error_handler)

@@ -197,6 +197,21 @@ def test_final_segment_omits_speaker_when_diarization_off(monkeypatch):
     assert "speaker" not in final
 
 
+def test_transcribed_text_never_logged_above_debug(monkeypatch, caplog):
+    # Le log est persisté sur disque (~/Library/Logs/Benji) et destiné à être
+    # joint aux rapports de bug : le contenu transcrit ne doit apparaître qu'en
+    # DEBUG, jamais au niveau INFO par défaut.
+    t, _ = _make(monkeypatch, [
+        [("secret", 0.0, 0.4), ("bancaire", 0.4, 1.0)],
+    ])
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+
+    with caplog.at_level("INFO", logger="benji"):
+        t._run_segment(_audio(1.0), is_final=True)
+
+    assert not any("secret" in r.getMessage().lower() for r in caplog.records)
+
+
 def test_final_segment_drops_hallucination(monkeypatch):
     # Known Whisper hallucination on the final pass → emit a drop instead of
     # leaving the streamed words on screen, and don't persist anything.

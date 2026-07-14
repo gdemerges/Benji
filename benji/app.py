@@ -386,6 +386,8 @@ class BenjiApplication:
             backend_url=self.cfg.llm.backend_url, open_preferences=self._open_preferences,
             toggle_pause=self.toggle_pause,
             is_paused=lambda: self.capture.is_paused,
+            stats=self.stats,
+            stt_config=self.cfg.stt,
         )
 
         # Optional: rolling live summary.
