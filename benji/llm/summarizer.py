@@ -12,20 +12,12 @@ log = logging.getLogger(__name__)
 
 MODEL_ID = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 
-# Cache the loaded MLX-LM model across calls — first load is ~1-2s, subsequent
-# summaries reuse the same weights.
-_MODEL_CACHE: dict = {}
-
-
 def _get_model():
-    if "model" not in _MODEL_CACHE:
-        from mlx_lm import load
-        log.info("Chargement du modèle '%s'...", MODEL_ID)
-        log.info("(Le premier lancement télécharge le modèle, ~800MB)")
-        model, tokenizer = load(MODEL_ID)
-        _MODEL_CACHE["model"] = model
-        _MODEL_CACHE["tokenizer"] = tokenizer
-    return _MODEL_CACHE["model"], _MODEL_CACHE["tokenizer"]
+    """Modèle partagé avec le correcteur (cf. benji/llm/model_cache.py) : même
+    MODEL_ID, donc mêmes poids en mémoire au lieu de deux copies."""
+    from benji.llm import model_cache
+
+    return model_cache.load(MODEL_ID)
 
 
 # Source unique de vérité du prompt, partagée par le provider local (mlx-lm) et

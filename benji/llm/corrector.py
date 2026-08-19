@@ -21,6 +21,12 @@ _load_failed = False
 
 
 def _ensure_loaded() -> bool:
+    """Charge le modèle via le cache partagé (cf. benji/llm/model_cache.py).
+
+    Le verrou de latch reste local : `_load_failed` est propre au correcteur,
+    qui doit se désactiver définitivement après un échec — le résumeur, lui,
+    a le droit de réessayer.
+    """
     global _model, _tokenizer, _load_failed
     if _load_failed:
         return False
@@ -30,10 +36,9 @@ def _ensure_loaded() -> bool:
         if _model is not None:
             return True
         try:
-            from mlx_lm import load
-            log.info("Loading %s...", MODEL_ID)
-            _model, _tokenizer = load(MODEL_ID)
-            log.info("Ready")
+            from benji.llm import model_cache
+
+            _model, _tokenizer = model_cache.load(MODEL_ID)
             return True
         except Exception as e:
             log.warning("Disabled (%s)", e)
