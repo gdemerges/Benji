@@ -70,6 +70,17 @@ _PROVIDERS = [
 _SYSTEM_FONT_DISPLAY = "Helvetica Neue"
 
 
+def _query_input_devices() -> list[dict]:
+    """Énumère les périphériques d'entrée. Isolé pour être remplaçable en test
+    et pour qu'un échec de PortAudio n'empêche pas d'ouvrir les Préférences."""
+    try:
+        import sounddevice as sd
+
+        return list(sd.query_devices())
+    except Exception:
+        return []
+
+
 def _resolve_font(family: str) -> QFont:
     """QFont affichable dans le combo pour une famille de config donnée."""
     if not family or family.startswith("."):
@@ -85,15 +96,22 @@ class PreferencesDialog(QDialog):
         settings: UserSettings,
         on_live_change: Callable[[object], None] | None = None,
         llm_config=None,
+        audio_config=None,
+        device_lister=None,
         parent=None,
     ):
         """on_live_change: reçoit une UIConfig mise à jour pour application à chaud
         (typiquement `overlay.apply_config`). llm_config: LLMConfig — si fournie,
-        expose le choix des moteurs (transcription/résumé local vs cloud Benji)."""
+        expose le choix des moteurs (transcription/résumé local vs cloud Benji).
+        audio_config: AudioConfig — si fournie, expose la capture de l'audio
+        système. device_lister: callable() -> list[dict] au format
+        `sounddevice.query_devices()` ; injectable pour tester sans matériel."""
         super().__init__(parent)
         self._stt = stt_config
         self._ui = ui_config
         self._llm = llm_config
+        self._audio = audio_config
+        self._device_lister = device_lister or _query_input_devices
         self._settings = settings
         self._on_live_change = on_live_change
         self.setWindowTitle("Préférences Benji")
@@ -167,6 +185,37 @@ class PreferencesDialog(QDialog):
             engine_form.addRow(self._hint_engines)
             layout.addWidget(self._engine_box)
 
+        # === Audio système (redémarrage requis) ===
+        # Sans ça Benji ne transcrit que le micro — donc, en visio, seulement
+        # l'utilisateur. macOS n'expose aucune API publique pour capter la
+        # sortie audio : il faut un pilote de boucle, d'où l'assistant ci-dessous.
+        self._audio_box = None
+        self._hint_audio = None
+        if self._audio is not None:
+            self._audio_box = QGroupBox("AUDIO SYSTÈME")
+            audio_form = QFormLayout(self._audio_box)
+            audio_form.setContentsMargins(16, 18, 16, 16)
+            audio_form.setSpacing(12)
+            audio_form.setLabelAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+
+            self._system_audio = QCheckBox("Capter le son des visios")
+            self._system_audio.setChecked(bool(self._audio.system_audio))
+            audio_form.addRow("Réunions", self._system_audio)
+
+            self._system_device = QComboBox()
+            audio_form.addRow("Périphérique", self._system_device)
+
+            self._hint_audio = QLabel()
+            self._hint_audio.setWordWrap(True)
+            audio_form.addRow(self._hint_audio)
+
+            self._refresh_devices()
+            self._system_audio.toggled.connect(self._on_system_audio_toggled)
+            self._on_system_audio_toggled(self._system_audio.isChecked())
+            layout.addWidget(self._audio_box)
+
         # === Affichage (application immédiate) ===
         self._ui_box = QGroupBox("AFFICHAGE")
         ui_form = QFormLayout(self._ui_box)
@@ -210,6 +259,52 @@ class PreferencesDialog(QDialog):
         self._buttons.accepted.connect(self._save)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
+
+    def _refresh_devices(self) -> None:
+        """Peuple la liste des boucles détectées et rédige le message d'aide.
+
+        Trois états possibles, chacun avec une consigne actionnable : aucun
+        pilote (installer), seulement un périphérique appartenant à une app
+        (avertir qu'il ne capte que cette app), pilote fiable (rappeler le
+        routage, qui est l'étape que tout le monde oublie).
+        """
+        from benji.audio.loopback import find_loopback_devices
+
+        try:
+            devices = find_loopback_devices(list(self._device_lister()))
+        except Exception:
+            devices = []
+
+        self._system_device.clear()
+        self._system_device.addItem("Détection automatique", None)
+        for device in devices:
+            label = device.name if device.is_reliable else f"{device.name} (cette app seulement)"
+            self._system_device.addItem(label, device.name)
+        self._select_data(self._system_device, self._audio.system_audio_device)
+
+        reliable = [d for d in devices if d.is_reliable]
+        if reliable:
+            self._hint_audio.setText(
+                f"Détecté : {reliable[0].name}. Dans Réglages Son, choisissez un "
+                "périphérique multi-sortie combinant vos enceintes et cette boucle — "
+                "sinon vous n'entendrez plus rien. Effet au prochain démarrage."
+            )
+        elif devices:
+            self._hint_audio.setText(
+                "Seul un périphérique appartenant à une application a été trouvé : "
+                "il ne captera que celle-ci. Installez BlackHole (gratuit) pour "
+                "capter tout le son du Mac."
+            )
+        else:
+            self._hint_audio.setText(
+                "Aucun pilote de boucle détecté. macOS ne permet pas de capter le son "
+                "sortant sans en installer un : installez BlackHole (gratuit, "
+                "existential.audio/blackhole), puis créez un périphérique multi-sortie "
+                "dans Configuration audio et MIDI."
+            )
+
+    def _on_system_audio_toggled(self, checked: bool) -> None:
+        self._system_device.setEnabled(checked)
 
     def _apply_theme(self) -> None:
         t = current_theme()
@@ -318,6 +413,8 @@ class PreferencesDialog(QDialog):
         self._hint.setStyleSheet(hint_qss)
         if self._hint_engines is not None:
             self._hint_engines.setStyleSheet(hint_qss)
+        if self._hint_audio is not None:
+            self._hint_audio.setStyleSheet(hint_qss)
 
     @staticmethod
     def _select_data(combo: QComboBox, data) -> None:
@@ -363,6 +460,15 @@ class PreferencesDialog(QDialog):
             s.set_value("summary_provider", summary_provider)
             self._stt.stt_provider = stt_provider
             self._llm.summary_provider = summary_provider
+
+        # --- Audio système : persister + mettre à jour la config (effet au reboot) ---
+        if self._audio is not None:
+            system_audio = self._system_audio.isChecked()
+            system_device = self._system_device.currentData()
+            s.set_value("system_audio", system_audio)
+            s.set_value("system_audio_device", system_device)
+            self._audio.system_audio = system_audio
+            self._audio.system_audio_device = system_device
 
         # --- Affichage : persister + appliquer à chaud ---
         font_family = self._font.currentFont().family()

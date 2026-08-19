@@ -64,3 +64,152 @@ def test_shutdown_is_safe_before_run():
     app = BenjiApplication()
     app.shutdown()  # ne doit pas lever
     assert app.stt_stopping.is_set()
+
+
+# --- audio système : câblage du mixeur dans le pipeline ---------------------
+
+
+def _fake_devices(*names):
+    return [{"name": n, "max_input_channels": 2, "default_samplerate": 48000} for n in names]
+
+
+def _stub_qt_free_pipeline(monkeypatch):
+    """Neutralise ce qui touche au matériel/ONNX dans _build_pipeline."""
+    monkeypatch.setattr("benji.app.AudioCapture", lambda queue, cfg, stats=None: ("capture", queue))
+    monkeypatch.setattr(
+        "benji.app.VADProcessor",
+        lambda *a, **kw: "vad",
+    )
+
+
+def test_system_audio_off_keeps_the_direct_mic_path(monkeypatch):
+    """Défaut : aucun mixeur, le micro écrit droit dans audio_queue."""
+    from benji.config import AudioConfig
+
+    _stub_qt_free_pipeline(monkeypatch)
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=False)))
+    app._build_pipeline()
+
+    assert app.mixer is None
+    assert app.system_capture is None
+    assert app.capture[1] is app.audio_queue
+
+
+def test_system_audio_on_inserts_the_mixer(monkeypatch):
+    from benji.config import AudioConfig
+
+    _stub_qt_free_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        "benji.audio.loopback.select_loopback",
+        lambda devices, preferred=None: type(
+            "D", (), {"name": "BlackHole 2ch", "is_reliable": True}
+        )(),
+    )
+
+    started = []
+
+    class FakeSystemCapture:
+        def __init__(self, name, sample_rate=16000):
+            self.name = name
+            self.ring = None
+
+        def start(self):
+            started.append(self.name)
+            return True
+
+    monkeypatch.setattr("benji.audio.system_capture.SystemAudioCapture", FakeSystemCapture)
+    monkeypatch.setattr("sounddevice.query_devices", lambda: _fake_devices("BlackHole 2ch"))
+
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=True)))
+    app._build_pipeline()
+
+    assert started == ["BlackHole 2ch"]
+    assert app.mixer is not None
+    # Le micro alimente le mixeur, pas audio_queue directement.
+    assert app.capture[1] is app.mixer.mic_queue
+    assert app.mixer.audio_queue is app.audio_queue
+
+
+def test_missing_loopback_falls_back_to_mic_only(monkeypatch):
+    """Le pilote de boucle est installé par l'utilisateur : son absence ne doit
+    jamais empêcher Benji de démarrer."""
+    from benji.config import AudioConfig
+
+    _stub_qt_free_pipeline(monkeypatch)
+    monkeypatch.setattr("sounddevice.query_devices", lambda: _fake_devices("MacBook Pro Microphone"))
+
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=True)))
+    app._build_pipeline()
+
+    assert app.mixer is None
+    assert app.capture[1] is app.audio_queue
+
+
+def test_device_enumeration_failure_falls_back_to_mic_only(monkeypatch):
+    from benji.config import AudioConfig
+
+    _stub_qt_free_pipeline(monkeypatch)
+
+    def boom():
+        raise OSError("PortAudio indisponible")
+
+    monkeypatch.setattr("sounddevice.query_devices", boom)
+
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=True)))
+    app._build_pipeline()
+
+    assert app.mixer is None
+    assert app.capture[1] is app.audio_queue
+
+
+def test_system_capture_open_failure_falls_back_to_mic_only(monkeypatch):
+    """Le périphérique existe mais refuse de s'ouvrir (déjà pris, reconfiguré)."""
+    from benji.config import AudioConfig
+
+    _stub_qt_free_pipeline(monkeypatch)
+
+    class FailingCapture:
+        def __init__(self, name, sample_rate=16000):
+            pass
+
+        def start(self):
+            return False
+
+    monkeypatch.setattr("benji.audio.system_capture.SystemAudioCapture", FailingCapture)
+    monkeypatch.setattr("sounddevice.query_devices", lambda: _fake_devices("BlackHole 2ch"))
+
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=True)))
+    app._build_pipeline()
+
+    assert app.mixer is None
+    assert app.system_capture is None
+    assert app.capture[1] is app.audio_queue
+
+
+def test_shutdown_is_idempotent_with_system_audio(monkeypatch):
+    """shutdown() est appelé sur un chemin d'erreur comme en sortie normale."""
+    from benji.config import AudioConfig
+
+    stopped = []
+
+    class FakeSystemCapture:
+        def __init__(self, name, sample_rate=16000):
+            pass
+
+        def start(self):
+            return True
+
+        def stop(self):
+            stopped.append("system")
+
+    _stub_qt_free_pipeline(monkeypatch)
+    monkeypatch.setattr("benji.audio.system_capture.SystemAudioCapture", FakeSystemCapture)
+    monkeypatch.setattr("sounddevice.query_devices", lambda: _fake_devices("BlackHole 2ch"))
+
+    app = BenjiApplication(AppConfigs(audio=AudioConfig(system_audio=True)))
+    app._build_pipeline()
+    app.capture = None  # le stub AudioCapture n'a pas de .stop()
+
+    app.shutdown()
+    app.shutdown()
+    assert stopped == ["system", "system"]

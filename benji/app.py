@@ -79,6 +79,8 @@ class BenjiApplication:
         self.display_queue: Queue | None = None
         self.capture: AudioCapture | None = None
         self.vad: VADProcessor | None = None
+        self.system_capture = None
+        self.mixer = None
 
         self.app: QApplication | None = None
         self.remote_mode = False
@@ -121,6 +123,8 @@ class BenjiApplication:
             splash.close()
             raise
         self._start_stt()
+        if self.mixer is not None:
+            self.mixer.start()
         self.capture.start()
         splash.close()
 
@@ -144,7 +148,9 @@ class BenjiApplication:
         from benji.settings import UserSettings
 
         self.user_settings = UserSettings()
-        self.user_settings.hydrate(stt=self.cfg.stt, ui=self.cfg.ui, llm=self.cfg.llm)
+        self.user_settings.hydrate(
+            stt=self.cfg.stt, ui=self.cfg.ui, llm=self.cfg.llm, audio=self.cfg.audio
+        )
         # Point de passage unique : session, providers, STT distant et billing
         # lisent tous cfg.llm.backend_url — valider ici couvre tout le monde.
         ensure_secure_backend_url(self.cfg.llm.backend_url)
@@ -171,7 +177,16 @@ class BenjiApplication:
         self.transcribe_queue = Queue(maxsize=3)
         self.display_queue = Queue(maxsize=10)
 
-        self.capture = AudioCapture(self.audio_queue, self.cfg.audio, stats=self.stats)
+        # Audio système : le micro alimente le mixeur, qui publie le mélange
+        # dans audio_queue. Désactivé (ou boucle indisponible), le micro écrit
+        # directement dans audio_queue — chemin historique, inchangé.
+        capture_sink = self.audio_queue
+        if self.cfg.audio.system_audio:
+            self._build_system_audio()
+            if self.mixer is not None:
+                capture_sink = self.mixer.mic_queue
+
+        self.capture = AudioCapture(capture_sink, self.cfg.audio, stats=self.stats)
         if not self.remote_mode:
             # En mode remote le VAD n'est jamais démarré : inutile de charger
             # le modèle Silero ONNX (fait dans VADProcessor.__init__).
@@ -180,6 +195,46 @@ class BenjiApplication:
                 self.display_queue, stats=self.stats,
             )
         log.info("Starting...")
+
+    def _build_system_audio(self) -> None:
+        """Arme la capture système + le mixeur, ou renonce proprement.
+
+        Toute défaillance (pilote absent, périphérique refusé) est non fatale :
+        Benji retombe sur le micro seul. Un pilote de boucle est installé par
+        l'utilisateur, il peut disparaître d'une session à l'autre — ça ne doit
+        jamais empêcher l'app de démarrer.
+        """
+        from benji.audio.loopback import select_loopback
+        from benji.audio.system_capture import AudioMixer, SystemAudioCapture
+
+        try:
+            import sounddevice as sd
+
+            devices = list(sd.query_devices())
+        except Exception as e:
+            log.warning("Audio système : énumération des périphériques impossible (%s)", e)
+            return
+
+        device = select_loopback(devices, self.cfg.audio.system_audio_device)
+        if device is None:
+            log.warning(
+                "Audio système activé mais aucun périphérique de boucle trouvé — "
+                "micro seul. Installer BlackHole puis router la sortie."
+            )
+            return
+
+        system = SystemAudioCapture(device.name, sample_rate=self.cfg.audio.sample_rate)
+        if not system.start():
+            return
+
+        self.system_capture = system
+        self.mixer = AudioMixer(
+            mic_queue=Queue(maxsize=100),
+            audio_queue=self.audio_queue,
+            system=system,
+            system_gain=self.cfg.audio.system_audio_gain,
+            stats=self.stats,
+        )
 
     def _create_qapp(self) -> None:
         self.app = QApplication(sys.argv)
@@ -325,6 +380,7 @@ class BenjiApplication:
             self.cfg.stt, self.cfg.ui, self.user_settings,
             on_live_change=self.overlay.apply_config,
             llm_config=self.cfg.llm,
+            audio_config=self.cfg.audio,
         ).exec()
 
     def toggle_pause(self) -> bool:
@@ -332,11 +388,19 @@ class BenjiApplication:
 
         La pause ferme réellement le stream d'entrée (l'indicateur micro macOS
         s'éteint). Appelé depuis le tray et la fenêtre principale — thread Qt.
+
+        La capture système suit le micro : mettre en pause doit tout arrêter,
+        sinon le voyant micro éteint laisserait croire que plus rien n'est
+        transcrit alors que la réunion continuerait de l'être.
         """
         if self.capture.is_paused:
             self.capture.resume()
+            if self.system_capture is not None:
+                self.system_capture.start()
         else:
             self.capture.pause()
+            if self.system_capture is not None:
+                self.system_capture.stop()
             # L'utterance en cours ne sera jamais terminée : éteindre
             # l'indicateur « en écoute » de l'UI.
             if self.display_queue is not None:
@@ -443,6 +507,12 @@ class BenjiApplication:
             self.live_summarizer.stop()
         if self.capture is not None:
             self.capture.stop()
+        # Ordre : micro, puis mixeur, puis capture système — on coupe la source
+        # avant le consommateur pour éviter que le mixeur tourne à vide.
+        if self.mixer is not None:
+            self.mixer.stop()
+        if self.system_capture is not None:
+            self.system_capture.stop()
         if self.audio_queue is not None:
             self.audio_queue.put(None)
         self.stt_stopping.set()

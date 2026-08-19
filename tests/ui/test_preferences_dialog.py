@@ -96,3 +96,98 @@ def test_provider_combo_keeps_unknown_value(qapp, tmp_path):
     dlg._save()
     assert llm.summary_provider == "cloud"
     dlg.close()
+
+
+# --- Audio système ---------------------------------------------------------
+
+
+def _devices(*names):
+    return [{"name": n, "max_input_channels": 2, "default_samplerate": 48000} for n in names]
+
+
+def _audio_dialog(tmp_path, devices, audio=None, settings=None):
+    from benji.config import AudioConfig
+    from benji.ui.preferences_dialog import PreferencesDialog
+
+    return PreferencesDialog(
+        STTConfig(),
+        UIConfig(),
+        settings if settings is not None else _settings(tmp_path),
+        audio_config=audio if audio is not None else AudioConfig(),
+        device_lister=lambda: devices,
+    )
+
+
+def test_audio_section_absent_without_audio_config(qapp, tmp_path):
+    """Rétrocompatibilité : les appelants existants ne passent pas d'AudioConfig."""
+    from benji.ui.preferences_dialog import PreferencesDialog
+
+    dlg = PreferencesDialog(STTConfig(), UIConfig(), _settings(tmp_path))
+    assert dlg._audio_box is None
+    dlg.close()
+
+
+def test_detected_loopback_is_listed_and_explained(qapp, tmp_path):
+    dlg = _audio_dialog(tmp_path, _devices("BlackHole 2ch", "MacBook Pro Microphone"))
+    labels = [dlg._system_device.itemText(i) for i in range(dlg._system_device.count())]
+    assert labels[0] == "Détection automatique"
+    assert "BlackHole 2ch" in labels
+    # L'étape que tout le monde oublie doit être écrite noir sur blanc.
+    assert "multi-sortie" in dlg._hint_audio.text()
+    dlg.close()
+
+
+def test_no_loopback_gives_install_instructions(qapp, tmp_path):
+    dlg = _audio_dialog(tmp_path, _devices("MacBook Pro Microphone"))
+    assert "BlackHole" in dlg._hint_audio.text()
+    assert dlg._system_device.count() == 1  # seulement « Détection automatique »
+    dlg.close()
+
+
+def test_app_owned_device_is_listed_but_flagged(qapp, tmp_path):
+    dlg = _audio_dialog(tmp_path, _devices("Microsoft Teams Audio"))
+    labels = [dlg._system_device.itemText(i) for i in range(dlg._system_device.count())]
+    assert any("cette app seulement" in label for label in labels)
+    assert "ne captera que celle-ci" in dlg._hint_audio.text()
+    dlg.close()
+
+
+def test_device_combo_follows_the_checkbox(qapp, tmp_path):
+    dlg = _audio_dialog(tmp_path, _devices("BlackHole 2ch"))
+    assert dlg._system_device.isEnabled() is False  # décoché par défaut
+    dlg._system_audio.setChecked(True)
+    assert dlg._system_device.isEnabled() is True
+    dlg.close()
+
+
+def test_saving_persists_and_applies_system_audio(qapp, tmp_path):
+    from benji.config import AudioConfig
+
+    settings = _settings(tmp_path)
+    audio = AudioConfig()
+    dlg = _audio_dialog(tmp_path, _devices("BlackHole 2ch"), audio=audio, settings=settings)
+    dlg._system_audio.setChecked(True)
+    dlg._select_data(dlg._system_device, "BlackHole 2ch")
+    dlg._save()
+
+    assert audio.system_audio is True
+    assert audio.system_audio_device == "BlackHole 2ch"
+    assert settings.get("system_audio") is True
+    assert settings.get("system_audio_device") == "BlackHole 2ch"
+
+
+def test_device_enumeration_failure_does_not_break_preferences(qapp, tmp_path):
+    """PortAudio peut échouer : les Préférences doivent quand même s'ouvrir."""
+    from benji.config import AudioConfig
+    from benji.ui.preferences_dialog import PreferencesDialog
+
+    def boom():
+        raise OSError("PortAudio down")
+
+    dlg = PreferencesDialog(
+        STTConfig(), UIConfig(), _settings(tmp_path),
+        audio_config=AudioConfig(), device_lister=boom,
+    )
+    assert dlg._system_device.count() == 1
+    assert "BlackHole" in dlg._hint_audio.text()
+    dlg.close()
