@@ -1,6 +1,10 @@
 # Benji
 
-Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine. Optimized for Apple Silicon (Whisper via [MLX](https://github.com/ml-explore/mlx)), with a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) fallback elsewhere.
+**Your meetings never leave your Mac.**
+
+Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine — microphone *and* the other participants' audio. No account, no API key, no upload: the transcript exists only on your disk. Optimized for Apple Silicon (Whisper via [MLX](https://github.com/ml-explore/mlx)), with a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) fallback elsewhere.
+
+Every cloud-transcription tool ships your meetings to someone else's server. Benji does not have that option turned on, because it does not need a server to work.
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue) ![Platform](https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)%20%7C%20Windows-lightgrey) ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -8,6 +12,7 @@ Real-time speech-to-text subtitles that overlay on top of your screen, running e
 
 - **Streaming word-by-word display** — words appear progressively as you speak, stabilized with LocalAgreement-2 (a word is shown as confirmed once two successive partial passes agree on it)
 - **Local transcription** — Whisper runs on-device; no API key, nothing leaves your machine
+- **Meeting capture** — mixes your microphone with the system audio of a video call, so both sides of the conversation get transcribed (requires a loopback driver, see below)
 - **Apple Silicon GPU** via MLX-Whisper (fp16); automatic fallback to faster-whisper (CTranslate2, CUDA or CPU) on other setups
 - **French by default** (`STTConfig.language = "fr"`), switchable to any Whisper language or auto-detect
 - **Voice Activity Detection** — Silero VAD (ONNX) with an adaptive threshold that lifts above the noise floor in noisy rooms
@@ -19,16 +24,19 @@ Real-time speech-to-text subtitles that overlay on top of your screen, running e
 - **Live rolling summary** — periodic LLM summary of the running transcript
 - **Glossary & AGC** — bias Whisper toward your proper nouns, and peak-normalize quiet microphones
 - **History** — every final utterance is saved with a timestamp to `~/.cache/benji/history.jsonl`
-- **Privacy-friendly** — everything runs locally
+- **Private by construction** — no telemetry, no account required, no network call in the default configuration
 
 ## Architecture
 
 Three inter-thread queues keep the Qt UI thread unblocked:
 
 ```
-Microphone → AudioCapture → audio_queue → VAD (Silero ONNX) → transcribe_queue → Transcriber (Whisper) → display_queue → DisplayBus → Overlay / Window
-              sounddevice                  VAD thread                            STT thread (+ supervisor)              Qt main thread
+Microphone   → AudioCapture   ─┐
+System audio → SystemCapture ─┴→ AudioMixer → audio_queue → VAD (Silero ONNX) → transcribe_queue → Transcriber (Whisper) → display_queue → DisplayBus → Overlay / Window
+               sounddevice      mixer thread                 VAD thread                            STT thread (+ supervisor)              Qt main thread
 ```
+
+When system audio is disabled, the mixer is never created and `AudioCapture` writes straight to `audio_queue`. When it is enabled, the mixer is driven by the microphone clock: for each mic chunk it consumes the same number of system samples, padding with silence if the system stream falls behind. The output rate is therefore exactly the mic's, and the VAD keeps receiving its fixed 512-sample chunks.
 
 The STT thread runs under a supervisor that restarts it with exponential backoff if it ever dies. Whisper is loaded on a background thread behind a splash screen so the UI stays responsive at startup.
 
@@ -93,6 +101,28 @@ A menu-bar (tray) icon also provides: show window, history, live summary, and qu
 - Subtitles appear at the bottom-center of the screen on a semi-transparent background
 - Words appear progressively as you speak; the text fades out after a period of silence
 
+## Capturing a meeting (system audio)
+
+By default Benji only hears your microphone — in a video call, that means only
+**you** get transcribed. To capture the other participants, Benji reads the Mac's
+audio output through a loopback driver.
+
+macOS deliberately exposes no public API to record system output, so this step
+requires a one-time setup:
+
+1. **Install [BlackHole](https://existential.audio/blackhole/)** (free, open source).
+2. Open **Audio MIDI Setup** → **+** → *Create Multi-Output Device*, and tick both
+   your usual output (speakers/headphones) **and** BlackHole. Without this, the sound
+   is routed to BlackHole only and you stop hearing the call.
+3. Select that Multi-Output Device as your Mac's sound output.
+4. In Benji: **Preferences → Audio système → Capter le son des visios**, then restart.
+
+Benji auto-detects the loopback device; you can pin a specific one in the same panel.
+The Preferences panel tells you which of the three states you are in, and pausing
+the microphone also stops system capture — a paused mic never means "still recording".
+
+Everything stays on-device: the mixed audio goes straight to the local Whisper model.
+
 ## Configuration
 
 All settings live in `benji/config.py` (no env vars, no config files). Some common knobs:
@@ -105,6 +135,9 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 | `STTConfig.llm_correction` | `False` | Grammar/punctuation polish via MLX-LM (Apple Silicon) |
 | `STTConfig.live_summary_interval_s` | `0` | Rolling summary every N seconds (`0` = disabled) |
 | `STTConfig.glossary` | `[]` | Proper nouns / domain terms biased into Whisper's prompt |
+| `AudioConfig.system_audio` | `False` | Capture system audio (meetings) and mix it with the mic |
+| `AudioConfig.system_audio_device` | `None` | Loopback device name substring; `None` = auto-detect |
+| `AudioConfig.system_audio_gain` | `1.0` | Gain applied to the system stream before mixing |
 | `VADConfig.silence_duration_ms` | `600` | Silence before a segment is flushed for final transcription |
 | `VADConfig.adaptive_threshold` | `True` | Lift the speech threshold above the room's noise floor |
 | `UIConfig.font_size` | `28` | Subtitle font size |
@@ -126,7 +159,7 @@ All sizes are available (`tiny`, `base`, `small`, `medium`, `large-v3`). Overrid
 
 ## How it works
 
-1. **Audio capture** — `sounddevice` records 16 kHz mono into `audio_queue`
+1. **Audio capture** — `sounddevice` records 16 kHz mono into `audio_queue`; with meeting capture on, a second stream reads the loopback device and both are summed (with saturation, not normalization, so the adaptive VAD doesn't read level pumping as noise)
 2. **VAD** — Silero VAD (ONNX) classifies 32 ms chunks; speech is accumulated and flushed to `transcribe_queue` after ~600 ms of silence (or sooner for long utterances)
 3. **Transcription** — the active Whisper backend (MLX on Apple Silicon, else faster-whisper) decodes segments with word timestamps. Partial passes re-decode only the unconfirmed tail (bounded cost), and LocalAgreement-2 commits the prefix two passes agree on
 4. **Display** — confirmed words stream to the overlay/window via `display_queue`; the final pass replaces them with post-processed (and optionally LLM-corrected) text

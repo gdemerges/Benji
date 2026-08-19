@@ -1,5 +1,24 @@
 # Benji — Backend
 
+> ## ❄️ GELÉ (2026-08-19)
+>
+> Ce service est **suspendu**, pas abandonné : rien n'est supprimé, tout
+> redémarre en l'état si besoin. Décision prise après analyse du produit —
+> l'infrastructure d'abonnement (auth, quotas, métering, Stripe) est complète
+> alors que l'app desktop n'est pas encore distribuable et n'a aucun
+> utilisateur. Construire la facturation avant le premier client est l'erreur
+> à corriger en priorité.
+>
+> **Ne pas reprendre** tant que Benji n'est pas distribué et que des
+> utilisateurs ne réclament pas explicitement la synchronisation multi-appareils :
+> - ❌ pas de passage Stripe en **live** (Checkout, portail, produits/prix)
+> - ❌ pas de persistance `/v1/history`
+> - ❌ pas de migration SQLite → Postgres
+> - ❌ pas de clients mobiles
+>
+> Le produit se vend d'abord en **achat unique, 100 % local** — voir le README
+> racine. Le cloud est une extension éventuelle, pas le modèle par défaut.
+
 Service cloud (FastAPI) : proxy STT/résumé, auth, facturation. Détient les clés
 API ; les clients (macOS, iOS, …) ne les voient jamais.
 
@@ -50,10 +69,15 @@ uv run pytest
 
 Les tests sont hermétiques (Claude est mocké, aucun appel réseau).
 
-## Prochaines étapes
+## Prochaines étapes — à la reprise seulement
+
+Gelées (cf. bandeau en tête). Conservées telles quelles pour retrouver le fil :
 
 1. Valider STT (Deepgram/Grok) en conditions réelles + flux temps réel app↔backend.
 2. Intégration Stripe live : création de Checkout Sessions, portail client,
    produits/prix (le webhook + la bascule de plan sont déjà en place).
 3. Persistance de l'historique (`/v1/history`) + sync multi-appareils.
 4. Migration SQLite → Postgres pour le multi-instance (interface `Database` isolée).
+
+**Condition de reprise** : des utilisateurs payants existent et demandent la
+synchronisation entre appareils.

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-
 from benji.ui import history_window
 from benji.ui.history_window import HistoryWindow
 from benji.ui.live_summary_window import LiveSummaryWindow
