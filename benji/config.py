@@ -41,6 +41,16 @@ class AudioConfig:
     channels: int = 1
     chunk_size: int = 512  # Silero VAD ONNX requires 512 samples (32ms @ 16kHz)
     dtype: str = "float32"
+    # Capture de l'audio système (son des autres participants en visio), mixé
+    # avec le micro avant le VAD. Nécessite un pilote de boucle installé par
+    # l'utilisateur — cf. benji/audio/loopback.py. Désactivé => chemin micro
+    # seul strictement inchangé.
+    system_audio: bool = False
+    # Sous-chaîne du nom du périphérique de boucle. None = auto-détection.
+    system_audio_device: str | None = None
+    # Gain appliqué au flux système avant sommation. 1.0 convient quand la
+    # sortie est à un niveau normal ; baisser si la visio sature le mixage.
+    system_audio_gain: float = 1.0
 
 
 @dataclass

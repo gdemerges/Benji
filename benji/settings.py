@@ -28,7 +28,7 @@ class PrefSpec:
     """Lie une clé persistée à un attribut d'une dataclass de config."""
 
     key: str          # clé logique (préfixée `prefs/` dans QSettings)
-    target: str       # "stt" | "ui" | "llm"
+    target: str       # "stt" | "ui" | "llm" | "audio"
     attr: str         # nom de l'attribut sur la config cible
     kind: type        # int | float | str | bool
     nullable: bool = False  # str seulement : "" persisté ↔ None (ex. langue = auto)
@@ -46,6 +46,10 @@ PREFS: tuple[PrefSpec, ...] = (
     # "remote" = via le backend Benji (abonnement Pro) — cf. STTConfig/LLMConfig.
     PrefSpec("stt_provider", "stt", "stt_provider", str, restart=True),
     PrefSpec("summary_provider", "llm", "summary_provider", str, restart=True),
+    # --- Audio système (redémarrage requis : ouvre un 2e stream + le mixeur) ---
+    PrefSpec("system_audio", "audio", "system_audio", bool, restart=True),
+    PrefSpec("system_audio_device", "audio", "system_audio_device", str,
+             nullable=True, restart=True),
     # --- Affichage (application live) ---
     PrefSpec("font_family", "ui", "font_family", str),
     PrefSpec("font_size", "ui", "font_size", int),
@@ -96,12 +100,12 @@ class UserSettings:
         self._s.setValue(_PREFIX + key, _encode(spec, value))
         self._s.sync()
 
-    def hydrate(self, *, stt=None, ui=None, llm=None) -> None:
+    def hydrate(self, *, stt=None, ui=None, llm=None, audio=None) -> None:
         """Applique les valeurs persistées sur les dataclasses de config fournies.
 
         Les clés absentes laissent le défaut de `config.py` intact.
         """
-        targets = {"stt": stt, "ui": ui, "llm": llm}
+        targets = {"stt": stt, "ui": ui, "llm": llm, "audio": audio}
         for spec in PREFS:
             obj = targets.get(spec.target)
             if obj is None:
