@@ -119,7 +119,9 @@ def summarize(
 
 def save_summary(summary: str) -> Path:
     """Save the summary to a timestamped markdown file."""
-    cache_dir = Path.home() / ".cache" / "benji" / "summaries"
+    from benji.paths import user_path
+
+    cache_dir = user_path("summaries")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now()

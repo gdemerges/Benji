@@ -149,6 +149,22 @@ def build_tray(
     show_history.triggered.connect(history_window.show)
     menu.addAction(show_history)
 
+    # Clôt la réunion en cours : ce qui suit part dans une nouvelle. Sans ça, le
+    # seul moyen de séparer deux réunions serait de redémarrer l'app.
+    new_meeting = QAction("Nouvelle réunion", menu)
+
+    def _start_new_meeting() -> None:
+        from benji import meetings
+
+        meeting = meetings.start_meeting()
+        if hasattr(history_window, "reload_meetings"):
+            history_window.reload_meetings()
+        tray.showMessage("Benji — nouvelle réunion", meeting.title,
+                         QSystemTrayIcon.MessageIcon.Information)
+
+    new_meeting.triggered.connect(_start_new_meeting)
+    menu.addAction(new_meeting)
+
     show_summary = QAction("Résumé en direct", menu)
     show_summary.triggered.connect(live_summary_window.show)
     menu.addAction(show_summary)

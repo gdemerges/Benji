@@ -13,22 +13,16 @@ def _default_font() -> str:
 
 
 def _default_model_size() -> str:
-    """Auto-select model size based on available hardware."""
-    has_gpu = False
-    try:
-        import ctranslate2
-        has_gpu = ctranslate2.get_cuda_device_count() > 0
-    except Exception:
-        pass
+    """Choisit la taille du modèle Whisper d'après la RAM disponible.
 
+    Pas de sonde CUDA : Benji cible Apple Silicon (MLX), où le décompte de
+    périphériques CUDA vaut toujours zéro. Le tester laissait croire à un
+    chemin GPU qui n'existe pas.
+    """
     ram_gb = psutil.virtual_memory().total / (1024**3)
 
-    if has_gpu:
-        return "large-v3"
-    if IS_MACOS and ram_gb >= 16:
-        # Apple Silicon with MLX handles medium comfortably
-        return "medium"
     if ram_gb >= 16:
+        # Apple Silicon avec MLX encaisse `medium` confortablement.
         return "medium"
     if ram_gb >= 8:
         return "small"

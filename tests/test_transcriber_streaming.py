@@ -227,3 +227,80 @@ def test_final_segment_drops_hallucination(monkeypatch):
     final = [e for e in events if e.get("type") == "final_text"]
     assert final and final[0]["text"] == "" and final[0]["drop"] is True
     assert saved == []  # nothing persisted
+
+
+# --- diarisation : recouvrement avec le décodage final ---
+
+
+def test_diarization_runs_while_the_final_pass_decodes(monkeypatch):
+    """Le tagger démarre AVANT la fin du décodage, pas après.
+
+    Le backend factice attend que la diarisation ait commencé pour rendre ses
+    mots : enchaînée après le décodage (l'ancien comportement), elle ne
+    démarrerait jamais et le décodage expirerait.
+    """
+    import threading
+
+    started = threading.Event()
+
+    class SlowTagger:
+        def label(self, audio, sr):
+            started.set()
+            return "A"
+
+    class WaitingBackend(FakeBackend):
+        def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
+            assert started.wait(timeout=2.0), "diarisation non démarrée pendant le décodage"
+            yield from super().transcribe(audio, language, beam_size, initial_prompt)
+
+    backend = WaitingBackend([[("bonjour", 0.0, 0.5)]])
+    monkeypatch.setattr(transcriber_mod, "build_backend", lambda **kw: backend)
+    t = Transcriber(Queue(), Queue(), STTConfig(diarization=False), stats=None, sample_rate=SR)
+    t.tagger = SlowTagger()
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+
+    t._run_segment(_audio(1.0), is_final=True)
+
+    final = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"][0]
+    assert final["speaker"] == "A"
+
+
+def test_hanging_diarizer_does_not_wedge_the_stt_loop(monkeypatch):
+    """Un tagger bloqué rend un segment sans locuteur — jamais un thread figé."""
+    import threading
+
+    release = threading.Event()
+
+    class HangingTagger:
+        def label(self, audio, sr):
+            release.wait(timeout=5.0)
+            return "A"
+
+    t, _ = _make(monkeypatch, [[("bonjour", 0.0, 0.5)]])
+    t.tagger = HangingTagger()
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+    monkeypatch.setattr(t, "_await_speaker",
+                        lambda future, timeout=0.05: Transcriber._await_speaker(t, future, 0.05))
+
+    try:
+        t._run_segment(_audio(1.0), is_final=True)
+        final = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"][0]
+        assert final["text"] == "Bonjour"
+        assert "speaker" not in final
+    finally:
+        release.set()
+
+
+def test_tagger_error_is_not_fatal(monkeypatch):
+    class BrokenTagger:
+        def label(self, audio, sr):
+            raise RuntimeError("modèle absent")
+
+    t, _ = _make(monkeypatch, [[("bonjour", 0.0, 0.5)]])
+    t.tagger = BrokenTagger()
+    saved = []
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: saved.append(speaker))
+
+    t._run_segment(_audio(1.0), is_final=True)
+
+    assert saved == [None]

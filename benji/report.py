@@ -9,13 +9,21 @@ les stats voyagent dans le corps et le log est révélé au Finder à côté.
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from urllib.parse import quote
 
 from benji import __version__
 
-SUPPORT_EMAIL = "guillaume.demerges@protonmail.com"
+# Adresse de destination du signalement. Surchargeable par `BENJI_SUPPORT_EMAIL`
+# pour que la build distribuée pointe une adresse dédiée sans toucher au code :
+# le défaut est une adresse personnelle, à ne pas diffuser publiquement.
+DEFAULT_SUPPORT_EMAIL = "guillaume.demerges@protonmail.com"
+
+
+def support_email() -> str:
+    return os.environ.get("BENJI_SUPPORT_EMAIL", "").strip() or DEFAULT_SUPPORT_EMAIL
 
 # Au-delà, les clients mail (et certains navigateurs) tronquent le mailto:.
 _MAX_BODY_CHARS = 1800
@@ -89,4 +97,4 @@ def build_mailto_url(
         body = body[:_MAX_BODY_CHARS] + "\n…(tronqué)"
     # quote() et non quote_plus() : un « + » dans un mailto: reste un « + »,
     # alors qu'un espace encodé en « + » s'afficherait littéralement.
-    return f"mailto:{SUPPORT_EMAIL}?subject={quote(subject)}&body={quote(body)}"
+    return f"mailto:{support_email()}?subject={quote(subject)}&body={quote(body)}"

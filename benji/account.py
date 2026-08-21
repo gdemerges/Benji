@@ -24,7 +24,11 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_CRED_PATH = Path.home() / ".cache" / "benji" / "credentials.json"
+def _cred_path() -> Path:
+    """Chemin du repli fichier des identifiants (migré depuis `~/.cache/benji`)."""
+    from benji.paths import user_path
+
+    return user_path("credentials.json")
 _KEYRING_SERVICE = "benji"
 _KEYRING_USER = "credentials"
 
@@ -58,8 +62,10 @@ class CredentialStore:
     hermétiques, sans toucher au vrai trousseau).
     """
 
-    def __init__(self, path: Path = _CRED_PATH, *, use_keyring: bool = True):
-        self._path = path
+    def __init__(self, path: Path | None = None, *, use_keyring: bool = True):
+        # Résolu à l'instanciation (et non à l'import) : le chemin dépend du HOME
+        # courant, que les tests réécrivent.
+        self._path = path or _cred_path()
         self._use_keyring = use_keyring
 
     def _keyring(self):

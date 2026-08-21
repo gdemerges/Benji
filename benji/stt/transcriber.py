@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from queue import Full, Queue
 
 import numpy as np
@@ -52,7 +53,12 @@ class Transcriber:
         self._correction_queue: Queue | None = None
         self._corrector_thread: threading.Thread | None = None
 
-        # Optional diarization (pitch or pyannote)
+        # Diarisation optionnelle (pitch ou pyannote). Le tagger n'a besoin que
+        # de l'audio : on le lance *en parallèle* du décodage final au lieu de
+        # l'enchaîner après (cf. _run_segment). Un seul worker — le tagger porte
+        # un état de clustering et ne doit jamais tourner sur deux segments à la
+        # fois ; le join a lieu avant de rendre la main, donc pas de recouvrement.
+        self._diarizer_pool: ThreadPoolExecutor | None = None
         self.tagger = (
             build_tagger(
                 self.config.diarization_backend,
@@ -222,6 +228,17 @@ class Transcriber:
 
         start_t = time.monotonic()
         audio = self._apply_agc(audio)
+
+        # Diarisation lancée AVANT le décodage : elle ne dépend que de l'audio.
+        # Enchaînée après, son coût (embedding pyannote) s'ajoutait tel quel au
+        # délai avant affichage du texte final ; en parallèle, il est absorbé par
+        # le décodage Whisper qui tourne de toute façon.
+        speaker_future = None
+        if self.tagger is not None:
+            speaker_future = self._ensure_diarizer_pool().submit(
+                self._label_speaker, audio, self.sample_rate
+            )
+
         self.display_queue.put({"type": "segment_start"})
         words: list[dict] = []
         for word in self.backend.transcribe(
@@ -239,6 +256,8 @@ class Transcriber:
             })
 
         if not words:
+            if speaker_future is not None:
+                speaker_future.cancel()
             self._reset_partial_state()
             return
 
@@ -246,15 +265,17 @@ class Transcriber:
             " ".join(w["text"] for w in words), language=self.config.language
         )
         if is_hallucination(full_text):
+            if speaker_future is not None:
+                speaker_future.cancel()
             # Tell the overlay to drop the streamed (hallucinated) words instead
             # of leaving them on screen.
             self.display_queue.put({"type": "final_text", "text": "", "drop": True})
             self._reset_partial_state()
             return
 
-        # Speaker label (best-effort). Kept as a structured field — never glued
-        # into the text — so the UI can colorize it per speaker.
-        speaker = self.tagger.label(audio, self.sample_rate) if self.tagger is not None else None
+        # Étiquette de locuteur (best-effort). Champ structuré, jamais collé dans
+        # le texte, pour que l'UI puisse le colorer par locuteur.
+        speaker = self._await_speaker(speaker_future)
 
         if self.config.llm_correction:
             # Show the raw transcription immediately, then correct it off-thread
@@ -283,6 +304,41 @@ class Transcriber:
 
         # Final closes the segment — partial state resets for the next utterance.
         self._reset_partial_state()
+
+    def _ensure_diarizer_pool(self) -> ThreadPoolExecutor:
+        """Pool à un worker, créé au premier segment étiqueté.
+
+        Paresseux : le tagger peut être posé après la construction (tests, bascule
+        de backend), et un pool n'a aucune raison d'exister sans diarisation.
+        """
+        if self._diarizer_pool is None:
+            self._diarizer_pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="STT-diarizer"
+            )
+        return self._diarizer_pool
+
+    def _label_speaker(self, audio, sample_rate: int):
+        """Étiquette de locuteur, best-effort : jamais fatale pour le segment."""
+        try:
+            return self.tagger.label(audio, sample_rate)
+        except Exception as e:
+            log.warning("Diarisation ignorée : %s", e)
+            return None
+
+    def _await_speaker(self, future, timeout: float = 5.0):
+        """Récupère l'étiquette calculée en parallèle du décodage.
+
+        Le timeout est un garde-fou : un tagger bloqué (modèle qui télécharge,
+        backend gelé) ne doit pas figer la boucle STT — on rend le segment sans
+        locuteur plutôt que d'arrêter la transcription.
+        """
+        if future is None:
+            return None
+        try:
+            return future.result(timeout=timeout)
+        except Exception as e:
+            log.warning("Diarisation abandonnée (%s) — segment sans locuteur", e)
+            return None
 
     def _emit_final(self, text: str, speaker: str | None, *, seq: int | None = None,
                     corrected: bool = False) -> None:
@@ -367,4 +423,6 @@ class Transcriber:
                     pass
                 # Reset streaming state so the next segment starts clean.
                 self._reset_partial_state()
+        if self._diarizer_pool is not None:
+            self._diarizer_pool.shutdown(wait=False)
         log.info("Transcription stopped")

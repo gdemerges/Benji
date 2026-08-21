@@ -499,6 +499,11 @@ class BenjiApplication:
 
     def shutdown(self) -> None:
         log.info("Shutting down...")
+        # Horodate la fin de la réunion en cours (si une transcription a eu lieu)
+        # avant de couper les threads qui pourraient encore en écrire.
+        from benji import meetings
+
+        meetings.end_current_meeting()
         if self.summary_worker is not None:
             self.summary_worker.shutdown()
         if self.bus is not None:

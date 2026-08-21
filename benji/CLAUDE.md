@@ -14,10 +14,14 @@
 
 `config.py` contient tous les paramètres sous forme de dataclasses (`AudioConfig`, `VADConfig`, `STTConfig`, `UIConfig`). La taille du modèle Whisper est auto-sélectionnée au démarrage selon RAM/GPU.
 
-`history.py` + `stats.py` reçoivent chaque utterance finale pour persister l'historique et les métriques de session.
+`paths.py` — emplacement des données utilisateur (`~/Library/Application Support/Benji`) vs cache re-téléchargeable (`~/.cache/benji`, modèles seulement), avec migration au premier accès. Les chemins sont résolus **à l'appel**, jamais à l'import.
+
+`meetings.py` — registre des réunions (id, titre, début, fin) dans `meetings.json` (0600, écriture atomique). La réunion courante est un état **du process** (plusieurs `TranscriptionHistory` écrivent le même fichier) et n'est ouverte que par la première transcription : `current_meeting_id()` lit sans créer.
+
+`history.py` + `stats.py` reçoivent chaque utterance finale pour persister l'historique et les métriques de session. `add()` est sur le chemin chaud : la troncature est amortie par un compteur en mémoire, jamais une relecture du fichier par segment. Chaque entrée porte son `meeting`.
 
 `export.py` — rendu pur (sans Qt) des entrées d'historique vers `txt` / `md` / `srt`, avec renommage optionnel des locuteurs (`speaker_names`). Le SRT dérive les bornes de temps des horodatages (fin d'un segment = début du suivant, durée estimée pour le dernier). Câblé aux boutons Copier/Exporter de `history_window`.
 
-`account.py` — compte Benji côté app : `Session` (login/register/refresh auto) + persistance des jetons dans `~/.cache/benji/credentials.json` (0600). L'abonnement suit le **compte**, pas le poste → mêmes identifiants = même plan sur toute plateforme. Au démarrage, `main.py` injecte l'access token dans `LLMConfig.backend_token`.
+`account.py` — compte Benji côté app : `Session` (login/register/refresh auto) + persistance des jetons dans `credentials.json` (0600) sous les données utilisateur. L'abonnement suit le **compte**, pas le poste → mêmes identifiants = même plan sur toute plateforme. Au démarrage, `main.py` injecte l'access token dans `LLMConfig.backend_token`.
 
 `billing.py` — client Stripe côté app : appelle le backend authentifié (`/v1/billing/checkout`, `/v1/billing/portal`) et ouvre l'URL renvoyée dans le navigateur. Aucune clé Stripe sur le poste. Câblé au menu tray (token fourni par la `Session`).

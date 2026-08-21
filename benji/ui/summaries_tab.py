@@ -35,7 +35,9 @@ _PENDING_PREFIX = "__pending__:"
 
 
 def _default_dir() -> Path:
-    return Path.home() / ".cache" / "benji" / "summaries"
+    from benji.paths import user_path
+
+    return user_path("summaries")
 
 
 class SummariesTab(QWidget):

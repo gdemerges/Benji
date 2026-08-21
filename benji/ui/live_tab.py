@@ -31,6 +31,11 @@ _MAX_CONTENT_WIDTH = 720
 _GROUP_GAP = timedelta(minutes=3)
 # Nombre d'items conservés pour le remplacement par correction (borne mémoire).
 _MAX_CORRECTABLE = 24
+# Nombre de lignes gardées à l'écran. Sans plafond, une réunion de deux heures
+# laisse plus d'un millier de QWidget vivants : la mémoire grimpe et chaque
+# nouvelle ligne relayoute une pile de plus en plus lourde. Les lignes retirées
+# de l'affichage restent dans l'historique sur disque — rien n'est perdu.
+_MAX_ITEMS = 500
 
 
 class _EmptyState(QWidget):
@@ -206,11 +211,33 @@ class LiveTab(QWidget):
             if len(self._correctable) > _MAX_CORRECTABLE:
                 self._correctable.pop(0)
 
+        self._trim_items()
+
         if not self.scroll.isVisible():
             self.empty.setVisible(False)
             self.scroll.setVisible(True)
         if not self._user_scrolled_up:
             QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _trim_items(self) -> None:
+        """Retire les lignes les plus anciennes au-delà de `_MAX_ITEMS`.
+
+        Le layout se termine par un stretch : les widgets occupent les index
+        0..count()-2, le plus ancien est donc à l'index 0.
+        """
+        while self.content_layout.count() - 1 > _MAX_ITEMS:
+            layout_item = self.content_layout.takeAt(0)
+            if layout_item is None:
+                return
+            widget = layout_item.widget()
+            if widget is None:
+                continue
+            # Une ligne retirée ne peut plus recevoir de correction : couper la
+            # référence avant `deleteLater`, sinon `_apply_correction` toucherait
+            # un objet C++ déjà détruit.
+            self._correctable = [c for c in self._correctable if c is not widget]
+            widget.setParent(None)
+            widget.deleteLater()
 
     def _scroll_to_bottom(self) -> None:
         sb = self.scroll.verticalScrollBar()

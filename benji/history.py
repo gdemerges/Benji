@@ -1,72 +1,152 @@
+"""Historique des transcriptions : un JSONL append-only, découpé en réunions.
+
+Chaque entrée porte l'identifiant de la réunion dans laquelle elle a été dite
+(cf. `benji/meetings.py`) ; les entrées écrites avant l'existence des réunions
+n'en ont pas et sont regroupées sous `meetings.LEGACY_ID`.
+
+Deux contraintes ont façonné ce module :
+
+- **Confidentialité** — le fichier contient le contenu des réunions. Il est créé
+  en 0600 dès l'`os.open` (un write-puis-chmod laisserait une fenêtre où il est
+  lisible par tous) et vit dans les données utilisateur, pas dans `~/.cache`.
+- **Chemin chaud** — `add()` est appelé pour *chaque* segment final, depuis le
+  thread STT ou le thread correcteur. Il ne doit donc rien faire de proportionnel
+  à la taille du fichier : la troncature est amortie via un compteur de lignes
+  tenu en mémoire, et non une relecture intégrale à chaque ajout.
+"""
+
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
+from benji import meetings
+from benji.paths import user_path
+
+# Au-delà du plafond, on ne tronque qu'une fois ce surplus accumulé : la
+# réécriture du fichier coûte O(n), l'amortir la rend négligeable par segment.
+_TRIM_SLACK = 500
+
 
 class TranscriptionHistory:
-    def __init__(self, max_entries: int = 1000):
+    def __init__(self, max_entries: int = 20000, path: Path | None = None):
         self.max_entries = max_entries
-        cache_dir = Path.home() / ".cache" / "benji"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        self.history_file = cache_dir / "history.jsonl"
+        self.history_file = path or user_path("history.jsonl")
+        self._lock = threading.Lock()
+        # None = jamais compté. Le comptage initial est fait au premier ajout,
+        # une seule fois pour la durée du process.
+        self._line_count: int | None = None
 
-    def add(self, text: str, speaker: str | None = None):
-        """Add a transcription to history (optionally tagged with a speaker)."""
+    # --- écriture ---
+
+    def add(self, text: str, speaker: str | None = None, meeting_id: str | None = None):
+        """Ajoute une transcription (optionnellement taguée d'un locuteur)."""
         entry = {
             "timestamp": datetime.now().isoformat(),
             "text": text,
+            "meeting": meeting_id or meetings.current_meeting().id,
         }
         if speaker:
             entry["speaker"] = speaker
-        # Mode 0600 dès la création (un write-puis-chmod laisserait la
-        # transcription lisible par tous entre les deux appels).
-        fd = os.open(self.history_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        self._trim_if_needed()
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
 
-    def _trim_if_needed(self):
-        """Keep only the last max_entries."""
-        if not self.history_file.exists():
+        with self._lock:
+            fd = os.open(self.history_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(line)
+            if self._line_count is None:
+                self._line_count = self._count_lines()
+            else:
+                self._line_count += 1
+            if self._line_count > self.max_entries + _TRIM_SLACK:
+                self._trim()
+
+    def _count_lines(self) -> int:
+        try:
+            with open(self.history_file, encoding="utf-8") as f:
+                return sum(1 for _ in f)
+        except OSError:
+            return 0
+
+    def _trim(self) -> None:
+        """Ne garde que les `max_entries` dernières entrées. Lock déjà tenu."""
+        try:
+            with open(self.history_file, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
             return
-        with open(self.history_file, encoding="utf-8") as f:
-            lines = f.readlines()
-        if len(lines) > self.max_entries:
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                f.writelines(lines[-self.max_entries :])
+        kept = lines[-self.max_entries:]
+        tmp = self.history_file.with_suffix(".jsonl.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.writelines(kept)
+        os.replace(tmp, self.history_file)
+        self._line_count = len(kept)
+
+    # --- lecture ---
+
+    def _iter_entries(self):
+        try:
+            with open(self.history_file, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict):
+                        yield entry
+        except OSError:
+            return
 
     def get_recent(self, n: int = 50) -> list[dict]:
-        """Get the n most recent transcriptions."""
-        if not self.history_file.exists():
-            return []
-        with open(self.history_file, encoding="utf-8") as f:
-            lines = f.readlines()
-        entries = []
-        for line in lines[-n:]:
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return list(reversed(entries))  # Most recent first
+        """Les n transcriptions les plus récentes, la plus récente en premier."""
+        from collections import deque
+
+        return list(reversed(deque(self._iter_entries(), maxlen=n)))
 
     def get_since(self, since: datetime) -> list[dict]:
-        """Get all transcriptions recorded since a given datetime."""
-        if not self.history_file.exists():
-            return []
+        """Toutes les transcriptions enregistrées depuis un instant donné."""
         entries = []
-        with open(self.history_file, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                    ts = datetime.fromisoformat(entry["timestamp"])
-                    if ts >= since:
-                        entries.append(entry)
-                except (json.JSONDecodeError, KeyError, ValueError):
-                    continue
+        for entry in self._iter_entries():
+            try:
+                if datetime.fromisoformat(entry["timestamp"]) >= since:
+                    entries.append(entry)
+            except (KeyError, TypeError, ValueError):
+                continue
         return entries
 
-    def clear(self):
-        """Clear all history."""
-        if self.history_file.exists():
-            self.history_file.unlink()
+    def get_for_meeting(self, meeting_id: str) -> list[dict]:
+        """Transcriptions d'une réunion, dans l'ordre chronologique d'écriture.
+
+        `meetings.LEGACY_ID` renvoie les entrées antérieures aux réunions
+        (celles sans champ `meeting`).
+        """
+        if meeting_id == meetings.LEGACY_ID:
+            return [e for e in self._iter_entries() if not e.get("meeting")]
+        return [e for e in self._iter_entries() if e.get("meeting") == meeting_id]
+
+    def has_legacy_entries(self) -> bool:
+        return any(not e.get("meeting") for e in self._iter_entries())
+
+    # --- suppression ---
+
+    def clear(self, meeting_id: str | None = None):
+        """Efface tout l'historique, ou seulement celui d'une réunion."""
+        with self._lock:
+            if meeting_id is None:
+                if self.history_file.exists():
+                    self.history_file.unlink()
+                self._line_count = 0
+                return
+            if meeting_id == meetings.LEGACY_ID:
+                kept = [e for e in self._iter_entries() if e.get("meeting")]
+            else:
+                kept = [e for e in self._iter_entries() if e.get("meeting") != meeting_id]
+            tmp = self.history_file.with_suffix(".jsonl.tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                for entry in kept:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            os.replace(tmp, self.history_file)
+            self._line_count = len(kept)

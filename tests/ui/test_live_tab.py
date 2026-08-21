@@ -97,3 +97,42 @@ def test_partial_line_shows_and_clears(qtbot):
     assert tab.partial.wave._active
     tab.on_event(_final("Bonjour monde.", "A", 1))
     assert not tab.partial.isVisible()
+
+
+def test_items_are_capped_so_long_meetings_do_not_grow_forever(qtbot, monkeypatch):
+    """Au-delà du plafond, les lignes les plus anciennes sont retirées.
+
+    Sans ça, une réunion longue laisse un QWidget par phrase en vie : la mémoire
+    grimpe et chaque nouvelle ligne relayoute une pile de plus en plus lourde.
+    """
+    import benji.ui.live_tab as live_tab_mod
+
+    monkeypatch.setattr(live_tab_mod, "_MAX_ITEMS", 5)
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+
+    for i in range(12):
+        tab.on_event(_final(f"Phrase {i}.", "A", i))
+
+    items = _items(tab)
+    assert len(items) == 5
+    # Ce sont bien les plus récentes qui restent.
+    assert items[-1]._text == "Phrase 11."
+    assert items[0]._text == "Phrase 7."
+
+
+def test_trimmed_items_cannot_receive_a_late_correction(qtbot, monkeypatch):
+    """Une correction tardive sur une ligne retirée ne touche pas un objet mort."""
+    import benji.ui.live_tab as live_tab_mod
+
+    monkeypatch.setattr(live_tab_mod, "_MAX_ITEMS", 2)
+    monkeypatch.setattr(live_tab_mod, "_MAX_CORRECTABLE", 10)
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+
+    for i in range(5):
+        tab.on_event(_final(f"Phrase {i}.", "A", i))
+
+    assert all(c in _items(tab) for c in tab._correctable)
+    tab.on_event(_final("Corrigée.", "A", 0, corrected=True))  # seq retiré : sans effet
+    assert [i._text for i in _items(tab)] == ["Phrase 3.", "Phrase 4."]

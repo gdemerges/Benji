@@ -318,16 +318,25 @@ class MainWindow(QMainWindow):
         if isinstance(item, dict) and item.get("type") == "final_text" and item.get("text"):
             self._refresh_summarize_enabled()
 
+    def _current_entries(self) -> list:
+        """Entrées de la réunion en cours (vide tant qu'aucune n'a été dite)."""
+        from benji import meetings
+
+        meeting_id = meetings.current_meeting_id()
+        if meeting_id is None:
+            return []
+        return self._history.get_for_meeting(meeting_id)
+
     def _refresh_summarize_enabled(self) -> None:
         try:
-            has_history = bool(self._history.get_since(self._session_start))
+            has_history = bool(self._current_entries())
         except Exception:
             has_history = False
         idle = self._pending_summary_id is None
         self.summarize_btn.setEnabled(has_history and idle)
 
     def _request_summary(self) -> None:
-        entries = self._history.get_since(self._session_start)
+        entries = self._current_entries()
         if not entries:
             return
         sid = uuid.uuid4().hex

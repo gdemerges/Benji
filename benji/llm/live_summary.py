@@ -9,6 +9,7 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
+from benji import meetings
 from benji.history import TranscriptionHistory
 from benji.llm.summarizer import summarize
 
@@ -46,7 +47,13 @@ class LiveSummarizer:
     def _run(self) -> None:
         while not self._stop.wait(self.interval):
             try:
-                entries = self.history.get_since(self._last_run_at)
+                # Cantonné à la réunion en cours : un résumé « live » ne doit
+                # pas mélanger ce qui vient d'être dit avec la réunion précédente.
+                meeting_id = meetings.current_meeting_id()
+                entries = [
+                    e for e in self.history.get_since(self._last_run_at)
+                    if meeting_id is None or e.get("meeting") == meeting_id
+                ]
                 if len(entries) < self.min_new_entries:
                     continue
                 if self.on_summary_start is not None:

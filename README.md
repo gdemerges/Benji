@@ -23,7 +23,7 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 - **Optional LLM polish** — post-hoc grammar/punctuation correction via MLX-LM (Qwen2.5-1.5B-Instruct-4bit)
 - **Live rolling summary** — periodic LLM summary of the running transcript
 - **Glossary & AGC** — bias Whisper toward your proper nouns, and peak-normalize quiet microphones
-- **History** — every final utterance is saved with a timestamp to `~/.cache/benji/history.jsonl`
+- **History** — every final utterance is saved with a timestamp, tagged with the meeting it belongs to, to `~/Library/Application Support/Benji/history.jsonl` (migrated automatically from the old `~/.cache/benji` location)
 - **Private by construction** — no telemetry, no account required, no network call in the default configuration
 
 ## Architecture
@@ -163,7 +163,7 @@ All sizes are available (`tiny`, `base`, `small`, `medium`, `large-v3`). Overrid
 2. **VAD** — Silero VAD (ONNX) classifies 32 ms chunks; speech is accumulated and flushed to `transcribe_queue` after ~600 ms of silence (or sooner for long utterances)
 3. **Transcription** — the active Whisper backend (MLX on Apple Silicon, else faster-whisper) decodes segments with word timestamps. Partial passes re-decode only the unconfirmed tail (bounded cost), and LocalAgreement-2 commits the prefix two passes agree on
 4. **Display** — confirmed words stream to the overlay/window via `display_queue`; the final pass replaces them with post-processed (and optionally LLM-corrected) text
-5. **History & summaries** — finals are appended to `~/.cache/benji/history.jsonl`; generated summaries land in `~/.cache/benji/summaries/`
+5. **History & summaries** — finals are appended to `~/Library/Application Support/Benji/history.jsonl`, each tagged with its meeting id; generated summaries land in `~/Library/Application Support/Benji/summaries/`. Meetings themselves (title, start, end) live in `meetings.json` next to them
 
 ## Development
 

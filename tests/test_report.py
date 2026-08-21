@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from benji import __version__
 from benji.config import STTConfig
-from benji.report import SUPPORT_EMAIL, build_mailto_url, build_report_body
+from benji.report import build_mailto_url, build_report_body, support_email
 from benji.stats import SessionStats
 
 
@@ -51,7 +51,7 @@ def test_mailto_url_is_well_formed():
     parsed = urlparse(url)
 
     assert parsed.scheme == "mailto"
-    assert parsed.path == SUPPORT_EMAIL
+    assert parsed.path == support_email()
 
     params = parse_qs(parsed.query)
     assert __version__ in unquote(params["subject"][0])
