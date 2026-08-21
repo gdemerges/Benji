@@ -20,6 +20,9 @@ dependencies = [
     "pywin32>=306 ; sys_platform == 'win32'",
     "mlx-lm~=0.26.3 ; sys_platform == 'darwin'",
     "mlx-whisper>=0.4.0 ; sys_platform == 'darwin'",
+    # Moteur de transcription par défaut (STTConfig.stt_provider = "parakeet").
+    # Poids sous licence CC-BY-4.0 : l'attribution NVIDIA est due si distribué.
+    "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
@@ -36,12 +39,6 @@ diarization = [
     # >=4.0: diarization.py uses the 4.x Model.from_pretrained API (token=, revision=).
     "pyannote.audio>=4.0",
     "torch>=2.2.0",
-]
-parakeet = [
-    # Moteur Parakeet TDT (STTConfig.stt_provider = "parakeet"). Environ 5× plus
-    # rapide que Whisper medium sur les tampons courts de Benji, à mémoire égale.
-    # Poids sous licence CC-BY-4.0 : l'attribution NVIDIA est due si distribué.
-    "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
 ]
 cloud = [
     # Résumé via l'API Claude (LLMConfig.summary_provider = "cloud").

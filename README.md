@@ -2,7 +2,9 @@
 
 **Your meetings never leave your Mac.**
 
-Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine — microphone *and* the other participants' audio. No account, no API key, no upload: the transcript exists only on your disk. Optimized for Apple Silicon (Whisper via [MLX](https://github.com/ml-explore/mlx)), with a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) fallback elsewhere.
+Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine — microphone *and* the other participants' audio. No account, no API key, no upload: the transcript exists only on your disk. Optimized for Apple Silicon via [MLX](https://github.com/ml-explore/mlx): [Parakeet TDT](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) by default, Whisper on demand, with a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) fallback elsewhere.
+
+Parakeet weights are licensed CC-BY-4.0 — credit: NVIDIA NeMo `parakeet-tdt-0.6b-v3`.
 
 Every cloud-transcription tool ships your meetings to someone else's server. Benji does not have that option turned on, because it does not need a server to work.
 
@@ -11,8 +13,8 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 ## Features
 
 - **Streaming word-by-word display** — words appear progressively as you speak, stabilized with LocalAgreement-2 (a word is shown as confirmed once two successive partial passes agree on it)
-- **Local transcription** — Whisper runs on-device; no API key, nothing leaves your machine
-- **Two local engines** — Whisper (default, honours your glossary) or Parakeet TDT (`uv sync --extra parakeet`), roughly 5× faster on short buffers but with no glossary support
+- **Local transcription** — the model runs on-device; no API key, nothing leaves your machine
+- **Two local engines** — Parakeet TDT by default (roughly 5× faster on the short buffers Benji works with), or Whisper if you need the glossary, which Parakeet cannot use
 - **Meeting capture** — mixes your microphone with the system audio of a video call, so both sides of the conversation get transcribed (requires a loopback driver, see below)
 - **Apple Silicon GPU** via MLX-Whisper (fp16); automatic fallback to faster-whisper (CTranslate2, CUDA or CPU) on other setups
 - **French by default** (`STTConfig.language = "fr"`), switchable to any Whisper language or auto-detect
@@ -70,7 +72,7 @@ Optional extras:
 uv sync --extra diarization   # real speaker diarization via pyannote (pulls in PyTorch; needs HF_TOKEN on first run)
 ```
 
-Models are downloaded automatically on first run: the Whisper model (size auto-selected, see below) and the Silero VAD ONNX (~2 MB). The MLX-LM model for correction/summary is only fetched if you enable those features.
+Models are downloaded automatically on first run: the transcription model (Parakeet, ~1.2 GB — or a Whisper model, size auto-selected, if you switch engines) and the Silero VAD ONNX (~2 MB). The MLX-LM model for correction/summary is only fetched if you enable those features.
 
 ## Usage
 
@@ -130,7 +132,7 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `STTConfig.stt_provider` | `"local"` | `"local"` (Whisper), `"parakeet"` (faster, no glossary), `"remote"` (Benji cloud) |
+| `STTConfig.stt_provider` | `"parakeet"` | `"parakeet"` (default, fast, no glossary), `"local"` (Whisper), `"remote"` (Benji cloud) |
 | `STTConfig.model_size` | Auto-selected | Whisper model — see selection logic below |
 | `STTConfig.language` | `"fr"` | Target language; set to `None` for auto-detect, or `"en"`, etc. |
 | `STTConfig.diarization` | `False` | Enable speaker labels (`diarization_backend`: `"pitch"` or `"pyannote"`) |

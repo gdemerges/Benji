@@ -62,7 +62,7 @@ def test_hydrate_providers(tmp_path):
     s.set_value("summary_provider", "remote")
 
     stt, llm = STTConfig(), LLMConfig()
-    assert stt.stt_provider == "local"  # défauts
+    assert stt.stt_provider == "parakeet"  # défauts
     assert llm.summary_provider == "local"
     s.hydrate(stt=stt, llm=llm)
 

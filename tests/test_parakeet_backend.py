@@ -143,3 +143,35 @@ def test_le_moteur_choisi_recoit_ses_poids(monkeypatch):
 
     assert backend.name == "parakeet"
     assert seen["id"] == "mlx-community/parakeet-tdt-0.6b-v3"
+
+
+# --- le moteur par défaut ---
+
+
+def test_parakeet_est_le_moteur_par_defaut():
+    """Le défaut doit être Parakeet : c'est le seul qui tienne le temps réel.
+
+    Verrouillé ici parce qu'un retour discret à Whisper multiplierait par cinq la
+    latence de chaque passe sans que rien ne le signale.
+    """
+    from benji.config import STTConfig
+
+    assert STTConfig().stt_provider == "parakeet"
+
+
+def test_le_moteur_par_defaut_est_une_dependance_dure():
+    """Le moteur par défaut ne peut pas être un extra optionnel.
+
+    Sinon un `uv sync` nu retombe silencieusement sur Whisper, et l'app tourne
+    cinq fois plus lentement que prévu sans que personne le voie.
+    """
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    deps = " ".join(pyproject["project"]["dependencies"])
+
+    assert "parakeet-mlx" in deps
+    assert "parakeet" not in pyproject["project"].get("optional-dependencies", {})

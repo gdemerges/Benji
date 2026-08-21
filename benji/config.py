@@ -71,13 +71,14 @@ class VADConfig:
 @dataclass
 class STTConfig:
     # Moteur de transcription :
-    #   "local"    — Whisper sur le Mac (défaut)
-    #   "parakeet" — Parakeet TDT sur le Mac : ~5× plus rapide que Whisper medium
-    #                sur les tampons courts, à mémoire équivalente, mais **sans
-    #                glossaire** (le modèle n'accepte aucun conditionnement par
-    #                le texte). Nécessite `uv sync --extra parakeet`.
+    #   "parakeet" — Parakeet TDT sur le Mac (défaut) : ~5× plus rapide que
+    #                whisper-medium sur les tampons courts de Benji, à mémoire
+    #                équivalente. Ne sait pas prendre de glossaire : le modèle
+    #                n'accepte aucun conditionnement par le texte.
+    #   "local"    — Whisper sur le Mac : plus lent, mais `glossary` et le
+    #                contexte glissant reprennent effet.
     #   "remote"   — transcription via le backend Benji (cf. docs/api-contract.md)
-    stt_provider: str = "local"
+    stt_provider: str = "parakeet"
     # Poids Parakeet utilisés quand stt_provider == "parakeet".
     parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
     model_size: str = field(default_factory=_default_model_size)
@@ -96,6 +97,7 @@ class STTConfig:
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
     # User glossary: proper nouns / domain terms injected as initial_prompt context
     # to bias Whisper toward correct spellings (e.g. ["Demergès", "Anthropic", "MLX"]).
+    # Sans effet sur le moteur Parakeet (défaut) — cf. stt_provider.
     glossary: list[str] = field(default_factory=list)
     # Audio gain control before STT: peak-normalize quiet segments to this target.
     # 0.0 disables. Useful for low-gain microphones.

@@ -66,8 +66,8 @@ _PROVIDERS = [
 # Le STT a un choix de plus que le résumé : deux moteurs locaux, aux compromis
 # opposés. Whisper sait tenir compte du glossaire, Parakeet est bien plus rapide.
 _STT_PROVIDERS = [
-    ("local", "Local — Whisper (glossaire actif)"),
-    ("parakeet", "Local — Parakeet (plus rapide, sans glossaire)"),
+    ("parakeet", "Local — Parakeet (rapide, défaut)"),
+    ("local", "Local — Whisper (plus lent, glossaire actif)"),
     ("remote", "Cloud Benji — abonnement Pro"),
 ]
 
@@ -152,6 +152,7 @@ class PreferencesDialog(QDialog):
         self._model.addItems(_MODEL_SIZES)
         if self._stt.model_size in _MODEL_SIZES:
             self._model.setCurrentText(self._stt.model_size)
+        # N'a d'effet que sur le moteur Whisper ; Parakeet n'a qu'un seul modèle.
         stt_form.addRow("Modèle Whisper", self._model)
 
         self._diarization = QCheckBox("Identifier les locuteurs")
@@ -189,8 +190,8 @@ class PreferencesDialog(QDialog):
             engine_form.addRow("Résumé", self._summary_provider)
 
             self._hint_engines = QLabel(
-                "Parakeet transcrit environ cinq fois plus vite que Whisper, mais "
-                "ignore le glossaire. Le cloud Benji nécessite un compte avec "
+                "Parakeet transcrit environ cinq fois plus vite ; passer à Whisper "
+                "réactive le glossaire. Le cloud Benji nécessite un compte avec "
                 "abonnement Pro. Effet au prochain démarrage."
             )
             engine_form.addRow(self._hint_engines)

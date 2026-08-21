@@ -1,4 +1,4 @@
-"""Splash window shown while the Whisper model loads."""
+"""Fenêtre d'attente affichée pendant le chargement du modèle de transcription."""
 
 from __future__ import annotations
 

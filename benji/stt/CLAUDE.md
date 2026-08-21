@@ -1,6 +1,6 @@
 # benji/stt/
 
-- `backend.py` — sélectionne le moteur : **Whisper** (mlx-whisper sur Apple Silicon, faster-whisper ailleurs) ou **Parakeet** (`STTConfig.stt_provider = "parakeet"`, extra `uv sync --extra parakeet`). Tout moteur indisponible retombe sur Whisper : un choix de moteur ne doit jamais empêcher de transcrire.
+- `backend.py` — sélectionne le moteur : **Whisper** (mlx-whisper sur Apple Silicon, faster-whisper ailleurs) ou **Parakeet** (`STTConfig.stt_provider = "parakeet"`, **le défaut** — dépendance dure sur macOS). Tout moteur indisponible retombe sur Whisper : un choix de moteur ne doit jamais empêcher de transcrire.
 
   **Pourquoi Parakeet change tout ici** : Whisper encode toujours une fenêtre paddée de **30 s**, quelle que soit la durée réelle du tampon ; Parakeet ne paie que l'audio reçu. Mesuré sur M4 Pro avec les tampons de Benji — tampon de 1,2 s : **58 ms contre ~680 ms** pour whisper-medium ; 6,7 s : 126 ms contre ~800 ms. Mémoire équivalente (2,3 vs 2,2 Go de pic MLX). C'est aussi pour ça que `large-v3-turbo` est un piège ici : son encodeur est celui de large-v3, il est **2 à 2,7× plus lent que medium** sur ce régime malgré sa réputation de rapidité en long-form.
 

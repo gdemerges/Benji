@@ -241,16 +241,21 @@ class BenjiApplication:
         self.app.setApplicationName("Benji")
 
     def _show_splash(self) -> SplashWindow:
-        # Load Whisper on a background thread so the UI stays responsive and the
-        # user sees clear progress instead of a frozen process.
+        # Charge le modèle sur un thread de fond pour que l'UI reste réactive et
+        # que l'utilisateur voie une progression au lieu d'un process figé.
         splash = SplashWindow()
-        splash.set_status(
-            "Connexion au service de transcription…" if self.remote_mode
-            else f"Chargement du modèle Whisper '{self.cfg.stt.model_size}'…"
-        )
+        splash.set_status(self._loading_message())
         splash.show()
         self.app.processEvents()
         return splash
+
+    def _loading_message(self) -> str:
+        """Ce que le splash annonce — le nom du moteur réellement en train de charger."""
+        if self.remote_mode:
+            return "Connexion au service de transcription…"
+        if self.cfg.stt.stt_provider == "parakeet":
+            return "Chargement du modèle Parakeet…"
+        return f"Chargement du modèle Whisper '{self.cfg.stt.model_size}'…"
 
     def _load_transcriber(self, splash: SplashWindow) -> None:
         if self.remote_mode:
