@@ -12,6 +12,7 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 
 - **Streaming word-by-word display** — words appear progressively as you speak, stabilized with LocalAgreement-2 (a word is shown as confirmed once two successive partial passes agree on it)
 - **Local transcription** — Whisper runs on-device; no API key, nothing leaves your machine
+- **Two local engines** — Whisper (default, honours your glossary) or Parakeet TDT (`uv sync --extra parakeet`), roughly 5× faster on short buffers but with no glossary support
 - **Meeting capture** — mixes your microphone with the system audio of a video call, so both sides of the conversation get transcribed (requires a loopback driver, see below)
 - **Apple Silicon GPU** via MLX-Whisper (fp16); automatic fallback to faster-whisper (CTranslate2, CUDA or CPU) on other setups
 - **French by default** (`STTConfig.language = "fr"`), switchable to any Whisper language or auto-detect
@@ -129,6 +130,7 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `STTConfig.stt_provider` | `"local"` | `"local"` (Whisper), `"parakeet"` (faster, no glossary), `"remote"` (Benji cloud) |
 | `STTConfig.model_size` | Auto-selected | Whisper model — see selection logic below |
 | `STTConfig.language` | `"fr"` | Target language; set to `None` for auto-detect, or `"en"`, etc. |
 | `STTConfig.diarization` | `False` | Enable speaker labels (`diarization_backend`: `"pitch"` or `"pyannote"`) |

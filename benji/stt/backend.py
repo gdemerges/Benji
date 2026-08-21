@@ -1,4 +1,16 @@
-"""Pluggable Whisper inference backends."""
+"""Moteurs de transcription interchangeables : Whisper (MLX / faster-whisper) et Parakeet.
+
+Tous exposent le même `WhisperBackend` : on leur donne un tampon audio, ils
+rendent des mots horodatés. Ce qui les sépare tient en une phrase : **Whisper
+encode toujours une fenêtre paddée de 30 s**, quelle que soit la durée réelle du
+tampon, là où Parakeet ne paie que l'audio qu'on lui donne. Sur le régime de
+Benji — des tampons de 1 à 8 s, re-décodés souvent — c'est un facteur 5 mesuré
+(cf. `benji/stt/CLAUDE.md`).
+
+En contrepartie Parakeet n'accepte **aucun conditionnement par le texte** : pas
+d'`initial_prompt`, donc pas de glossaire ni de contexte glissant. Le choix se
+fait dans les Préférences, section MOTEURS.
+"""
 
 from __future__ import annotations
 
@@ -162,12 +174,111 @@ class FasterWhisperBackend:
                         }
 
 
+_PARAKEET_DEFAULT_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
+
+
+def group_tokens_into_words(tokens) -> list[dict]:
+    """Regroupe les sous-mots de Parakeet en mots horodatés.
+
+    Le modèle rend des morceaux de mots (`" De"`, `" c"`, `"ô"`, `"té"`) : un
+    token qui commence par une espace ouvre un mot, les suivants s'y collent. Le
+    mot hérite du début du premier morceau et de la fin du dernier — c'est ce qui
+    permet au découpage incrémental et à l'export SRT de continuer à fonctionner.
+
+    Fonction pure : elle prend n'importe quel objet exposant `.text`, `.start` et
+    `.end`, donc elle se teste sans charger le modèle.
+    """
+    words: list[dict] = []
+    for token in tokens:
+        text = getattr(token, "text", "") or ""
+        if not text.strip():
+            continue
+        start = getattr(token, "start", None)
+        end = getattr(token, "end", None)
+        if text.startswith(" ") or not words:
+            words.append({"text": text.strip(), "start": start, "end": end})
+        else:
+            # Suite du mot courant : on étend sa borne de fin.
+            words[-1]["text"] += text.strip()
+            if end is not None:
+                words[-1]["end"] = end
+    return words
+
+
+def words_from_result(result) -> list[dict]:
+    """Mots horodatés d'un `AlignedResult`, phrase par phrase.
+
+    Le regroupement est fait **par phrase** et non sur les tokens aplatis : le
+    premier morceau d'une phrase ne porte pas toujours l'espace de tête, si bien
+    qu'aplatir recollait la fin d'une phrase au début de la suivante
+    (« Apple.Ça »).
+    """
+    words: list[dict] = []
+    for sentence in getattr(result, "sentences", []) or []:
+        words.extend(group_tokens_into_words(getattr(sentence, "tokens", []) or []))
+    return words
+
+
+class ParakeetBackend:
+    """Parakeet TDT sur Apple Silicon (MLX), alimenté **en mémoire**.
+
+    L'API publique de `parakeet-mlx` ne transcrit que des chemins de fichiers.
+    On passe donc par `get_logmel()` + `generate()` : Benji a déjà l'audio en
+    numpy, et écrire les tampons d'une réunion dans un fichier temporaire serait
+    une régression de confidentialité — la règle du projet est que rien de ce qui
+    est dit ne se retrouve sur le disque en dehors de l'historique chiffré par
+    les permissions. Effet de bord heureux : pas de dépendance à ffmpeg.
+    """
+
+    name = "parakeet"
+
+    def __init__(self, model_id: str = _PARAKEET_DEFAULT_REPO):
+        from parakeet_mlx import from_pretrained  # noqa: F401 (échoue vite si absent)
+
+        self.model_id = model_id
+        log.info("Chargement de Parakeet '%s'...", model_id)
+        self.model = from_pretrained(model_id)
+        self.preprocess = self.model.preprocessor_config
+        self._warned_prompt = False
+        log.info("Parakeet prêt (16 kHz natif, décodage glouton)")
+
+    def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
+        import mlx.core as mx
+        from parakeet_mlx.audio import get_logmel
+
+        if initial_prompt and not self._warned_prompt:
+            # Une fois par session : sinon le message part à chaque segment.
+            log.info(
+                "Parakeet ignore initial_prompt : le glossaire et le contexte "
+                "glissant sont sans effet sur ce moteur."
+            )
+            self._warned_prompt = True
+
+        if audio is None or len(audio) == 0:
+            return
+        mel = get_logmel(mx.array(audio), self.preprocess)
+        for result in self.model.generate(mel):
+            yield from words_from_result(result)
+
+
 def build_backend(
     model_size: str,
     beam_size: int,
     cpu_threads: int,
     compute_type: str = "auto",
+    engine: str = "whisper",
+    parakeet_model: str = _PARAKEET_DEFAULT_REPO,
 ) -> WhisperBackend:
+    if engine == "parakeet":
+        try:
+            return ParakeetBackend(parakeet_model)
+        except ImportError:
+            log.warning(
+                "parakeet-mlx absent (uv sync --extra parakeet) — repli sur Whisper"
+            )
+        except Exception as e:
+            log.warning("Parakeet indisponible (%s) — repli sur Whisper", e)
+
     if platform.system() == "Darwin":
         try:
             # MLX-Whisper is fp16 on Apple GPU — `compute_type` is a no-op here,

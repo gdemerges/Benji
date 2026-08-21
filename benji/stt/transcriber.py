@@ -68,14 +68,22 @@ class Transcriber:
             else None
         )
 
-        log.info("Loading Whisper model '%s'...", self.config.model_size)
+        engine = "parakeet" if self.config.stt_provider == "parakeet" else "whisper"
+        if engine == "parakeet" and self.config.glossary:
+            # Dit une fois, fort : sinon l'utilisateur croit son glossaire actif.
+            log.warning(
+                "Glossaire ignoré : le moteur Parakeet n'accepte pas de "
+                "conditionnement par le texte. Repasser sur Whisper pour l'utiliser."
+            )
         self.backend = build_backend(
             model_size=self.config.model_size,
             beam_size=self.config.beam_size,
             cpu_threads=self.config.cpu_threads,
             compute_type=self.config.compute_type,
+            engine=engine,
+            parakeet_model=self.config.parakeet_model,
         )
-        log.info("Model loaded")
+        log.info("Moteur de transcription prêt : %s", self.backend.name)
 
     def warmup(self, seconds: float = 1.0) -> None:
         """Run a one-shot inference on silence to amortize JIT/graph compilation.

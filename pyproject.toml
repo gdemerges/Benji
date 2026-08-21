@@ -37,6 +37,12 @@ diarization = [
     "pyannote.audio>=4.0",
     "torch>=2.2.0",
 ]
+parakeet = [
+    # Moteur Parakeet TDT (STTConfig.stt_provider = "parakeet"). Environ 5× plus
+    # rapide que Whisper medium sur les tampons courts de Benji, à mémoire égale.
+    # Poids sous licence CC-BY-4.0 : l'attribution NVIDIA est due si distribué.
+    "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
+]
 cloud = [
     # Résumé via l'API Claude (LLMConfig.summary_provider = "cloud").
     # Clé via la variable d'environnement ANTHROPIC_API_KEY.

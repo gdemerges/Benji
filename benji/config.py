@@ -70,9 +70,16 @@ class VADConfig:
 
 @dataclass
 class STTConfig:
-    # "local" : Whisper sur le Mac (défaut). "remote" : transcription via le
-    # backend Benji (cf. docs/api-contract.md ; coordonnées dans LLMConfig).
+    # Moteur de transcription :
+    #   "local"    — Whisper sur le Mac (défaut)
+    #   "parakeet" — Parakeet TDT sur le Mac : ~5× plus rapide que Whisper medium
+    #                sur les tampons courts, à mémoire équivalente, mais **sans
+    #                glossaire** (le modèle n'accepte aucun conditionnement par
+    #                le texte). Nécessite `uv sync --extra parakeet`.
+    #   "remote"   — transcription via le backend Benji (cf. docs/api-contract.md)
     stt_provider: str = "local"
+    # Poids Parakeet utilisés quand stt_provider == "parakeet".
+    parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
     model_size: str = field(default_factory=_default_model_size)
     language: str | None = "fr"  # Force French by default
     beam_size: int = 5  # Final-pass beam size (quality)

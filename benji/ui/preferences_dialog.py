@@ -63,6 +63,14 @@ _PROVIDERS = [
     ("remote", "Cloud Benji — abonnement Pro"),
 ]
 
+# Le STT a un choix de plus que le résumé : deux moteurs locaux, aux compromis
+# opposés. Whisper sait tenir compte du glossaire, Parakeet est bien plus rapide.
+_STT_PROVIDERS = [
+    ("local", "Local — Whisper (glossaire actif)"),
+    ("parakeet", "Local — Parakeet (plus rapide, sans glossaire)"),
+    ("remote", "Cloud Benji — abonnement Pro"),
+]
+
 
 # Famille système macOS (privée, préfixée « . ») : QFontComboBox ne sait pas
 # l'afficher et retombe sur une entrée arbitraire de la liste. On la représente
@@ -172,15 +180,18 @@ class PreferencesDialog(QDialog):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
 
-            self._stt_provider = self._provider_combo(self._stt.stt_provider)
+            self._stt_provider = self._provider_combo(
+                self._stt.stt_provider, choices=_STT_PROVIDERS
+            )
             engine_form.addRow("Transcription", self._stt_provider)
 
             self._summary_provider = self._provider_combo(self._llm.summary_provider)
             engine_form.addRow("Résumé", self._summary_provider)
 
             self._hint_engines = QLabel(
-                "Le cloud Benji nécessite un compte avec abonnement Pro. "
-                "Effet au prochain démarrage."
+                "Parakeet transcrit environ cinq fois plus vite que Whisper, mais "
+                "ignore le glossaire. Le cloud Benji nécessite un compte avec "
+                "abonnement Pro. Effet au prochain démarrage."
             )
             engine_form.addRow(self._hint_engines)
             layout.addWidget(self._engine_box)
@@ -423,11 +434,11 @@ class PreferencesDialog(QDialog):
             combo.setCurrentIndex(idx)
 
     @staticmethod
-    def _provider_combo(current: str) -> QComboBox:
-        """Combo local/remote ; une valeur hors liste (ex. « cloud » en dev)
+    def _provider_combo(current: str, choices=None) -> QComboBox:
+        """Combo de choix de moteur ; une valeur hors liste (ex. « cloud » en dev)
         est ajoutée telle quelle pour ne pas être écrasée silencieusement."""
         combo = QComboBox()
-        for value, label in _PROVIDERS:
+        for value, label in (choices or _PROVIDERS):
             combo.addItem(label, value)
         if combo.findData(current) < 0:
             combo.addItem(current, current)
