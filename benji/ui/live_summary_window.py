@@ -22,6 +22,7 @@ from benji.ui.style import (
     panel_background_qss,
 )
 from benji.ui.widgets.markdown_view import MarkdownView
+from benji.ui.widgets.sheet import Sheet
 from benji.ui.widgets.waveform import WaveformDot
 
 _PLACEHOLDER = "En attente du premier résumé…"
@@ -35,6 +36,9 @@ class LiveSummaryWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("LiveSummaryWindow")
+        # Sans cet attribut, la feuille de style d'un QWidget dérivé n'est pas
+        # peinte : la fenêtre garderait le fond système au lieu du plan de travail.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setWindowTitle("Résumé en direct")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.resize(560, 460)
@@ -53,12 +57,14 @@ class LiveSummaryWindow(QWidget):
         head.addWidget(self.stamp, 0)
 
         self.view = MarkdownView()
+        self.sheet = Sheet(margins=(6, 6, 6, 6))
+        self.sheet.body.addWidget(self.view)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 14, 18, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(6)
         layout.addLayout(head)
-        layout.addWidget(self.view, 1)
+        layout.addWidget(self.sheet, 1)
 
         self._markdown = ""
         self._streaming = False
@@ -82,6 +88,7 @@ class LiveSummaryWindow(QWidget):
         self.stamp.setStyleSheet(meta_qss(t))
         self.wave.set_color(t.record)
         self.view.apply_theme(t)
+        self.sheet.update()
 
     # --- Points d'entrée thread-safe ------------------------------------
     def on_summary(self, text: str, at: datetime):

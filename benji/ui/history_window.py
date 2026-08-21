@@ -51,6 +51,7 @@ from benji.ui.style import (
     primary_button_qss,
     secondary_button_qss,
 )
+from benji.ui.widgets.sheet import Sheet
 from benji.ui.widgets.transcript_view import TranscriptView
 
 _EXPORT_FORMATS = [
@@ -91,6 +92,9 @@ class HistoryWindow(QWidget):
         self._loading_meetings = False
 
         self.setObjectName("HistoryWindow")
+        # Sans cet attribut, la feuille de style d'un QWidget dérivé n'est pas
+        # peinte : la fenêtre garderait le fond système au lieu du plan de travail.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setWindowTitle("Réunions")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.resize(880, 580)
@@ -99,7 +103,15 @@ class HistoryWindow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_sidebar())
-        root.addWidget(self._build_detail(), 1)
+
+        # Le compte rendu est une feuille posée sur le plan de travail ; la liste
+        # des réunions reste au fond, comme une tranche de classeur.
+        self.sheet = Sheet(margins=(0, 0, 0, 0))
+        self.sheet.body.addWidget(self._build_detail())
+        wrap = QVBoxLayout()
+        wrap.setContentsMargins(10, 12, 14, 14)
+        wrap.addWidget(self.sheet)
+        root.addLayout(wrap, 1)
 
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self._refresh_stats)
@@ -193,7 +205,7 @@ class HistoryWindow(QWidget):
         actions.addWidget(self.summarize_btn)
 
         layout = QVBoxLayout(detail)
-        layout.setContentsMargins(24, 20, 20, 16)
+        layout.setContentsMargins(28, 22, 24, 18)
         layout.setSpacing(12)
         layout.addLayout(head)
         layout.addWidget(self.head_rule)
@@ -209,10 +221,7 @@ class HistoryWindow(QWidget):
         self.setStyleSheet(
             panel_background_qss(t, "#HistoryWindow")
             + f"""
-            #sidebar {{
-                background-color: {_rgba(t.ink_alpha(3))};
-                border-right: 1px solid {_rgba(t.spine)};
-            }}
+            #sidebar {{ background: transparent; }}
             #detail {{ background: transparent; }}
             QListWidget {{
                 background: transparent;
@@ -248,6 +257,7 @@ class HistoryWindow(QWidget):
                     self.rename_meeting_btn, self.new_meeting_btn):
             btn.setStyleSheet(secondary_button_qss(t))
         self.clear_btn.setStyleSheet(destructive_button_qss(t))
+        self.sheet.update()
         self.summarize_btn.setStyleSheet(primary_button_qss(t))
         self.transcript.apply_theme()
 

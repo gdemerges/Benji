@@ -6,17 +6,26 @@ Benji est un **instrument sténographique**, pas une app système. Trois règles
 
 1. **Une seule couleur saturée : le rouge d'enregistrement** (`theme.record`). Il ne signifie qu'une chose, « on prend au mot, maintenant » : le point du direct, la forme d'onde active, le micro coupé. Jamais une action — un bouton principal rouge se lit comme un danger. L'action principale est un **aplat d'encre** (`primary_button_qss`), la destructive est un texte rouge sans aplat (`destructive_button_qss`).
 2. **Trois voix typographiques.** L'interface parle en **SF Pro** (`FONT_UI`), les paroles transcrites sont composées en **New York**, le serif système (`FONT_READING` / `reading_font()` pour les documents markdown, que `setMarkdown` compose sans lire le CSS), le temps est en **SF Mono** tabulaire (`FONT_MONO`). Distinguer d'un coup d'œil ce qui a été *dit* de ce que l'app *dit* fait la moitié de la lisibilité.
-3. **Aucune couleur en dur hors de `style.py`**, et rien n'est dérivé de la couleur d'accentuation du système : c'est précisément ce qui faisait ressembler Benji aux Réglages Système.
+3. **Deux plans, pas un aplat.** `paper` est le plan de travail (le fond de fenêtre), `sheet` la feuille de lecture posée dessus (`widgets/sheet.py` : coins 12 px, liseré, ombre peinte à la main). Ce qui fait qu'une surface de lecture paraît récente est le **relief**, pas la teinte. La ligne de temps court sur la feuille, jamais sur le plan. La feuille de la fenêtre principale est bornée en largeur : au-delà elle mangerait tout le plan et le relief disparaîtrait.
+4. **Aucune couleur en dur hors de `style.py`**, et rien n'est dérivé de la couleur d'accentuation du système : c'est précisément ce qui faisait ressembler Benji aux Réglages Système.
 
 **L'élément signature** est la **ligne de temps** : un filet vertical continu le long du transcript, avec un tick à chaque changement de minute et une **tige colorée** courant sur toute la durée d'une prise de parole. Elle porte de l'information vraie (quand, qui, combien de temps) — on voit qui a monopolisé une réunion en parcourant la marge. Chaque `ChatItem` peint son propre segment : mis bout à bout, ils ne laissent aucun trou. Le « maintenant » est le point rouge de `PartialBubble`, au bout de la même ligne.
 
 Les couleurs de locuteur sont une **famille sourde de cinq teintes**, pas un arc-en-ciel : ce sont des tiges de 2 px, elles ne doivent jamais rivaliser avec le rouge du direct. `speaker_color(label, on_dark=True)` force la variante claire pour l'overlay, toujours posé sur du noir.
 
+## Piège Qt : un fond de fenêtre ne se peint pas tout seul
+
+Une feuille de style posée sur une `QMainWindow` ou sur un `QWidget` **dérivé** n'est pas rendue tant que le widget ne réclame pas son fond stylé. Le symptôme est sournois : à l'écran tout paraît normal, parce que macOS remplit la fenêtre avec **son** gris système — la couleur définie dans `style.py` n'apparaît nulle part et l'app garde le look générique qu'elle cherche à quitter. Trois précautions, verrouillées par `tests/ui/test_window_background.py` (qui lit le pixel du fond, seul moyen de distinguer « peint dans notre couleur » de « pas peint du tout ») :
+
+- `MainWindow` peint le plan sur son **widget central** (`#central`), pas seulement sur `QMainWindow` ;
+- la **bande de toolbar** vit hors du widget central et a son propre fond ;
+- les fenêtres `QWidget` dérivées (`HistoryWindow`, `LiveSummaryWindow`) arment `WA_StyledBackground`.
+
 ## Modules
 
-- `style.py` — **source de vérité**. Tokens (`paper`, `card`, `ink`, `ink_muted`, `ink_faint`, `ink_ghost`, `spine`, `record` + alias hérités), helpers QSS (`panel_background_qss`, `card_qss`, `reading_qss`, `meta_qss`, `field_qss`, `primary/secondary/destructive_button_qss`), fontes, vibrancy macOS (`NSVisualEffectView`, opt-in `BENJI_VIBRANCY`). `current_theme()` ne dépend plus d'un `QApplication`.
+- `style.py` — **source de vérité**. Tokens (`paper`, `sheet`, `sheet_edge`, `card`, `ink`, `ink_muted`, `ink_faint`, `ink_ghost`, `spine`, `record` + alias hérités), helpers QSS (`panel_background_qss`, `card_qss`, `reading_qss`, `meta_qss`, `field_qss`, `primary/secondary/destructive_button_qss`), fontes, vibrancy macOS (`NSVisualEffectView`, opt-in `BENJI_VIBRANCY`). `current_theme()` ne dépend plus d'un `QApplication`.
 - `overlay.py` — sous-titres always-on-top, click-through macOS via `NSWindow` level. Consomme `DisplayBus.event` — ne doit jamais bloquer la boucle Qt. Sticky-across-Spaces réasserté sur `NSWorkspaceActiveSpaceDidChangeNotification` (+ timer 2 s). Multi-écrans : suit l'écran sous le curseur (`UIConfig.follow_active_screen`), réévalué à chaque `segment_start`. **Exception assumée à la règle typographique** : une incrustation vidéo se lit de loin sur un fond quelconque, elle reste en sans-serif gras.
-- `main_window.py` — toolbar + onglets Live/Résumés. La pastille de statut affiche le **nom de la réunion en cours** (l'onde dit déjà l'état) ; « Micro en pause » reprend la main, seul état non déductible de l'onde.
+- `main_window.py` — toolbar sur le plan, puis une **feuille** qui porte ses propres onglets (posés à côté d'elle, ils ne tombaient jamais d'aplomb avec son bord). La pastille de statut affiche le **nom de la réunion en cours** (l'onde dit déjà l'état) ; « Micro en pause » reprend la main, seul état non déductible de l'onde.
 - `live_tab.py` — transcript **ancré en bas** (le ressort est en tête du layout) : la ligne en cours colle à la dernière phrase au lieu de flotter au bas d'une fenêtre vide. Regroupement par prise de parole, correction LLM (`corrected` + `seq`) qui **remplace** la ligne (`_MAX_CORRECTABLE`), lignes affichées plafonnées (`_MAX_ITEMS`, les anciennes restent sur disque).
 - `history_window.py` — **liste de réunions à gauche, compte rendu à droite**, rendu par le même `TranscriptView` que le direct : relire une vieille réunion donne la page qu'on regardait pendant qu'elle se disait. Actions hiérarchisées (Copier / Exporter… / Locuteurs… secondaires, Effacer destructive et confirmée, Résumer principale). Renommer, Nouvelle réunion. Les entrées héritées apparaissent sous « Sessions précédentes ».
 - `live_summary_window.py` — **markdown rendu**, même feuille que l'onglet Résumés (on y lisait `**Décision**` en toutes lettres). En-tête : onde active pendant la rédaction + heure du résumé.
@@ -29,6 +38,7 @@ Les couleurs de locuteur sont une **famille sourde de cinq teintes**, pas un arc
   - `partial_bubble.py` — le « maintenant » : onde dans la gouttière (pour la ligne vivante, le temps *est* l'onde), point rouge sur la ligne, texte en gris.
   - `transcript_view.py` — transcript figé composé comme le direct (mêmes `ChatItem`), utilisé par la fenêtre Réunions.
   - `markdown_view.py` — rendu markdown partagé (CSS + fonte de document + marges de titre que `setMarkdown` ignore).
+  - `sheet.py` — la feuille de lecture surélevée. Ombre peinte à la main : un `QGraphicsDropShadowEffect` sur un conteneur qui embarque une zone défilante force un re-rendu hors écran de tout le sous-arbre à chaque frame de scroll.
   - `waveform.py` — **élément signature historique** : 5 barres animées quand la voix est détectée. Timer actif seulement pendant l'animation.
   - `status_pill.py`, `segmented_control.py` (onglets **soulignés**, pas de pilule grise), `summary_item.py`, `pending_item.py`, `icons.py`.
 

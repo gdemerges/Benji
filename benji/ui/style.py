@@ -40,15 +40,18 @@ def vibrancy_enabled() -> bool:
 # Les couleurs ne sont plus dérivées de la couleur d'accentuation du système :
 # c'est précisément ce qui faisait ressembler Benji à une boîte de dialogue.
 
+# Deux plans, pas un aplat : `paper` est le plan de travail (plus profond),
+# `sheet` la feuille de lecture posée dessus. C'est le relief, pas la teinte, qui
+# fait qu'une surface de lecture paraît récente.
 _LIGHT = {
-    "paper": QColor("#F7F8FA"),
-    "card": QColor(255, 255, 255, 224),
+    "paper": QColor("#E7EAF0"),
+    "sheet": QColor("#FFFFFF"),
     "ink": QColor("#16181D"),
     "record": QColor("#E5484D"),
 }
 _DARK = {
-    "paper": QColor("#14161A"),
-    "card": QColor(255, 255, 255, 13),
+    "paper": QColor("#0A0C0F"),
+    "sheet": QColor("#191C21"),
     "ink": QColor("#E9ECF1"),
     "record": QColor("#FF5C61"),
 }
@@ -57,8 +60,10 @@ _DARK = {
 @dataclass(frozen=True)
 class Theme:
     is_dark: bool
-    paper: QColor      # fond de fenêtre
-    card: QColor       # surface surélevée (panneaux, champs)
+    paper: QColor      # plan de travail : le fond de fenêtre
+    sheet: QColor      # la feuille de lecture, surélevée sur le papier
+    sheet_edge: QColor # liseré de la feuille
+    card: QColor       # creux dans la feuille (champs, listes déroulantes)
     ink: QColor        # texte principal
     ink_muted: QColor  # texte secondaire
     ink_faint: QColor  # métadonnées, horodatages
@@ -137,7 +142,11 @@ def current_theme() -> Theme:
     return Theme(
         is_dark=dark,
         paper=p["paper"],
-        card=p["card"],
+        sheet=p["sheet"],
+        sheet_edge=_alpha(ink, 10 if dark else 8),
+        # Un champ blanc sur une feuille blanche est invisible : les creux sont
+        # une teinte d'encre, ils fonctionnent sur les deux thèmes.
+        card=_alpha(ink, 5),
         ink=ink,
         ink_muted=_alpha(ink, 62),
         ink_faint=_alpha(ink, 38),
@@ -291,13 +300,16 @@ def primary_button_qss(theme: Theme) -> str:
     enregistre ». Un bouton rouge sur macOS se lit comme un danger.
     """
     fg = theme.paper if theme.is_dark else QColor("#FFFFFF")
+    # Opaque en sombre : sur la feuille (#191C21) un aplat translucide se délave
+    # et le bouton principal perd son autorité.
+    fill = theme.ink if theme.is_dark else theme.ink_alpha(92)
     return f"""
     QPushButton {{
         font-family: {FONT_UI};
         font-size: 12px;
         font-weight: 600;
         color: {_rgb(fg)};
-        background-color: {_rgba(theme.ink_alpha(92))};
+        background-color: {_rgba(fill)};
         border: none;
         padding: 7px 16px;
         border-radius: 7px;

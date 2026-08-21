@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QMainWindow,
     QMenu,
@@ -42,6 +43,7 @@ from benji.ui.widgets.icons import (
     sliders_icon,
 )
 from benji.ui.widgets.segmented_control import SegmentedControl
+from benji.ui.widgets.sheet import Sheet
 from benji.ui.widgets.status_pill import StatusPill
 
 log = logging.getLogger(__name__)
@@ -159,24 +161,45 @@ class MainWindow(QMainWindow):
 
         # === Central ===
         central = QWidget()
+        central.setObjectName("central")
         v = QVBoxLayout(central)
-        v.setContentsMargins(0, 8, 0, 0)
-        v.setSpacing(8)
-
-        # Onglets alignés à gauche, dans la marge du document : ils désignent une
-        # vue sur la même matière, ils n'ont pas à trôner au centre.
-        seg_wrap = QHBoxLayout()
-        seg_wrap.setContentsMargins(20, 0, 20, 0)
-        self.segmented = SegmentedControl(["Live", "Résumés"])
-        seg_wrap.addWidget(self.segmented)
-        v.addLayout(seg_wrap)
+        v.setContentsMargins(18, 2, 18, 18)
+        v.setSpacing(6)
 
         self.stack = QStackedWidget()
         self.live_tab = LiveTab()
         self.summaries_tab = SummariesTab()
         self.stack.addWidget(self.live_tab)
         self.stack.addWidget(self.summaries_tab)
-        v.addWidget(self.stack, 1)
+
+        # Le transcript se pose sur une feuille surélevée ; la toolbar et les
+        # onglets restent sur le plan de travail, derrière. La feuille est bornée
+        # en largeur : au-delà, elle mangerait tout le plan et le relief
+        # disparaîtrait — c'est une page posée sur un bureau, pas un fond.
+        # Onglets alignés à gauche *dans* la feuille : ils désignent une vue sur
+        # la matière qu'elle porte. Posés à côté d'elle, ils flottaient sur le
+        # plan de travail sans jamais tomber d'aplomb avec son bord.
+        self.segmented = SegmentedControl(["Live", "Résumés"])
+        seg_wrap = QWidget()
+        seg_row = QHBoxLayout(seg_wrap)
+        seg_row.setContentsMargins(18, 10, 18, 0)
+        seg_row.addWidget(self.segmented)
+
+        self.tab_rule = QFrame()
+        self.tab_rule.setFrameShape(QFrame.Shape.HLine)
+        self.tab_rule.setFixedHeight(1)
+
+        self.sheet = Sheet(margins=(6, 6, 6, 6))
+        self.sheet.setMaximumWidth(900)
+        self.sheet.body.addWidget(seg_wrap)
+        self.sheet.body.addWidget(self.tab_rule)
+        self.sheet.body.addWidget(self.stack, 1)
+        sheet_row = QHBoxLayout()
+        sheet_row.setContentsMargins(0, 0, 0, 0)
+        sheet_row.addStretch(1)
+        sheet_row.addWidget(self.sheet, 20)
+        sheet_row.addStretch(1)
+        v.addLayout(sheet_row, 1)
 
         self.segmented.currentChanged.connect(self.stack.setCurrentIndex)
         self.segmented.currentChanged.connect(self._on_tab_changed)
@@ -194,16 +217,34 @@ class MainWindow(QMainWindow):
         # Vibrancy active : fond transparent pour laisser passer le flou natif.
         # Sinon : un aplat de papier — pas de dégradé, il salirait la couleur sous
         # la ligne de temps.
+        # Le fond est peint sur le **widget central**, pas sur la QMainWindow :
+        # une feuille de style posée sur la QMainWindow n'est jamais rendue (le
+        # widget ne remplit pas son fond de lui-même), si bien que la couleur du
+        # plan de travail n'apparaissait pas et macOS remplissait la fenêtre avec
+        # son gris système — exactement le look générique qu'on cherche à quitter.
+        # La bande de la toolbar est en dehors du widget central : sans fond
+        # explicite, elle reste elle aussi non peinte et laisse voir la couleur
+        # système au-dessus du plan de travail.
         if self._vibrancy_active:
-            window_bg = "QMainWindow { background: transparent; }"
+            window_bg = "QMainWindow, #central { background: transparent; }"
+            toolbar_bg = "background: transparent;"
         else:
-            window_bg = panel_background_qss(t, "QMainWindow")
+            window_bg = (
+                panel_background_qss(t, "QMainWindow")
+                + panel_background_qss(t, "#central")
+            )
+            toolbar_bg = f"background-color: rgb({t.paper.red()},{t.paper.green()},{t.paper.blue()});"
         self.setStyleSheet(f"""
             {window_bg}
-            QToolBar {{ background: transparent; border: none; padding: 10px 14px; spacing: 6px; }}
+            QToolBar {{ {toolbar_bg} border: none; padding: 10px 14px; spacing: 6px; }}
         """)
         self.status_pill.apply_theme()
         self.segmented.apply_theme()
+        self.tab_rule.setStyleSheet(
+            f"background-color: rgba({t.spine.red()},{t.spine.green()},"
+            f"{t.spine.blue()},{t.spine.alpha()}); border: none;"
+        )
+        self.sheet.update()
         self._apply_toolbar_button_styles()
         if hasattr(self.live_tab, "apply_theme"):
             self.live_tab.apply_theme()
