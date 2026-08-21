@@ -64,12 +64,14 @@ def test_export_cancelled_writes_nothing(window, tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.txt"))
 
 
-def test_rename_applies_to_export(window):
+def test_rename_shows_names_in_the_transcript(window):
     # Persiste sur disque puisque load_history() relit l'historique.
     window.history.add("Bonjour.", speaker="A")
     window.history.add("Salut.", speaker="B")
+    window.reload_meetings()
     window._speaker_names = {"A": "Alice", "B": "Bob"}
     window.load_history()
-    shown = window.text_edit.toPlainText()
-    assert "Alice : Bonjour." in shown
-    assert "Bob : Salut." in shown
+
+    headers = [i._speaker for i in window.transcript._items]
+    assert headers == ["Alice", "Bob"]
+    assert "Bonjour." in window.transcript.plain_text()

@@ -1,4 +1,11 @@
-"""Segmented control style macOS — 2+ segments mutually exclusive."""
+"""Onglets soulignés — 2+ segments mutuellement exclusifs.
+
+Pas une pilule segmentée : sur une app dont tout le propos est un document, un
+onglet souligné est le geste juste (on change de vue sur la même matière), et la
+pilule grise de macOS est exactement ce qui faisait ressembler Benji à un
+panneau de Réglages Système. L'indicateur est un trait d'encre de 2 px sous
+l'onglet actif — la même encre que le texte, aucune couleur dépensée ici.
+"""
 
 from __future__ import annotations
 
@@ -19,16 +26,17 @@ class SegmentedControl(QWidget):
         self._current = 0
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(3, 3, 3, 3)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _checked, idx=i: self.setCurrentIndex(idx))
-            layout.addWidget(btn, 1)
+            layout.addWidget(btn, 0)
             self._buttons.append(btn)
+        layout.addStretch(1)
 
         self.setCurrentIndex(0)
         self.apply_theme()
@@ -57,31 +65,29 @@ class SegmentedControl(QWidget):
 
     def apply_theme(self) -> None:
         t = current_theme()
-        track = t.label_alpha(7)
-        active = t.label_alpha(14)
-        label = t.label
-        secondary = t.secondary_label
+        ink = t.ink
+        muted = t.ink_muted
         self.setStyleSheet(f"""
-            SegmentedControl {{
-                background-color: rgba({track.red()},{track.green()},{track.blue()},{track.alpha()});
-                border-radius: 8px;
-            }}
+            SegmentedControl {{ background: transparent; }}
             QPushButton {{
                 font-family: {FONT_UI};
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 500;
-                color: rgba({secondary.red()},{secondary.green()},{secondary.blue()},{secondary.alpha()});
+                color: rgba({muted.red()},{muted.green()},{muted.blue()},{muted.alpha()});
                 background: transparent;
                 border: none;
-                padding: 4px 14px;
-                border-radius: 6px;
+                border-bottom: 2px solid transparent;
+                padding: 6px 2px 7px 2px;
+                margin-right: 18px;
             }}
             QPushButton:checked {{
-                background-color: rgba({active.red()},{active.green()},{active.blue()},{active.alpha()});
-                color: rgba({label.red()},{label.green()},{label.blue()},{label.alpha()});
+                color: rgba({ink.red()},{ink.green()},{ink.blue()},{ink.alpha()});
+                font-weight: 600;
+                border-bottom: 2px solid rgba({ink.red()},{ink.green()},{ink.blue()},{ink.alpha()});
             }}
             QPushButton:hover:!checked {{
-                color: rgba({label.red()},{label.green()},{label.blue()},{label.alpha()});
+                color: rgba({ink.red()},{ink.green()},{ink.blue()},{ink.alpha()});
+                border-bottom: 2px solid rgba({ink.red()},{ink.green()},{ink.blue()},40);
             }}
         """)
-        self.setFixedHeight(30)
+        self.setFixedHeight(32)

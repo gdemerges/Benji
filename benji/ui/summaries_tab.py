@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PyQt6.QtCore import QFileSystemWatcher, QSize, Qt
-from PyQt6.QtGui import QGuiApplication, QTextCursor
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from benji.ui.style import FONT_DISPLAY, FONT_MONO, FONT_UI, current_theme
+from benji.ui.style import FONT_UI, current_theme
 from benji.ui.widgets.icons import clipboard_icon, folder_arrow_icon
 from benji.ui.widgets.pending_item import PendingItem
 from benji.ui.widgets.summary_item import SummaryItem
@@ -146,27 +146,12 @@ class SummariesTab(QWidget):
         self._refresh_item_widget_themes()
 
     def _apply_preview_css(self) -> None:
-        t = current_theme()
-        label_rgba = f"rgba({t.label.red()},{t.label.green()},{t.label.blue()},{t.label.alpha()})"
-        sec_rgba = f"rgba({t.secondary_label.red()},{t.secondary_label.green()},{t.secondary_label.blue()},{t.secondary_label.alpha()})"
-        code_bg = t.label_alpha(8)
-        code_rgba = f"rgba({code_bg.red()},{code_bg.green()},{code_bg.blue()},{code_bg.alpha()})"
-        accent_rgba = f"rgb({t.accent.red()},{t.accent.green()},{t.accent.blue()})"
-        css = f"""
-            body {{ font-family: {FONT_UI}; font-size: 14px; line-height: 1.6; color: {label_rgba}; padding: 24px 28px; }}
-            h1 {{ font-family: {FONT_DISPLAY}; font-size: 22px; font-weight: 600; margin: 0 0 16px 0; }}
-            h2 {{ font-size: 17px; font-weight: 600; margin: 20px 0 10px 0; }}
-            h3 {{ font-size: 15px; font-weight: 600; margin: 16px 0 8px 0; }}
-            p {{ margin: 0 0 12px 0; }}
-            code {{ font-family: {FONT_MONO}; font-size: 13px; background-color: {code_rgba}; padding: 1px 5px; border-radius: 3px; }}
-            pre {{ background-color: {code_rgba}; padding: 10px 14px; border-radius: 6px; }}
-            pre code {{ background: transparent; padding: 0; }}
-            blockquote {{ border-left: 3px solid {accent_rgba}; padding-left: 12px; color: {sec_rgba}; margin: 12px 0; }}
-            ul, ol {{ margin: 0 0 12px 18px; padding: 0; }}
-            li {{ margin-bottom: 4px; }}
-            a {{ color: {accent_rgba}; text-decoration: none; }}
-        """
-        self.preview.document().setDefaultStyleSheet(css)
+        """Même feuille que la fenêtre Résumé en direct : une seule voix."""
+        from benji.ui.style import reading_font
+        from benji.ui.widgets.markdown_view import markdown_css
+
+        self.preview.document().setDefaultStyleSheet(markdown_css(current_theme()))
+        self.preview.document().setDefaultFont(reading_font())
         path = self._selected_path()
         if path and not path.startswith(_PENDING_PREFIX) and not path.startswith(_HEADER_PREFIX):
             try:
@@ -258,26 +243,10 @@ class SummariesTab(QWidget):
             pass
         return ""
 
-    # Marges (haut, bas) en px injectées par niveau de titre. QTextBrowser.setMarkdown
-    # ignore les marges CSS des titres — on les pose donc directement sur les
-    # QTextBlockFormat après rendu, sinon H2/H3 collent au texte précédent.
-    _HEADING_MARGINS = {1: (2, 12), 2: (22, 8), 3: (16, 6)}
-
     def _render_markdown(self, text: str) -> None:
-        """setMarkdown + espacement des titres (contourne l'ignorance des marges CSS)."""
-        self.preview.setMarkdown(text)
-        doc = self.preview.document()
-        block = doc.begin()
-        while block.isValid():
-            level = block.blockFormat().headingLevel()
-            if level in self._HEADING_MARGINS:
-                top, bottom = self._HEADING_MARGINS[level]
-                fmt = block.blockFormat()
-                fmt.setTopMargin(top)
-                fmt.setBottomMargin(bottom)
-                cursor = QTextCursor(block)
-                cursor.setBlockFormat(fmt)
-            block = block.next()
+        from benji.ui.widgets.markdown_view import render_markdown
+
+        render_markdown(self.preview, text)
 
     def _selected_path(self) -> str | None:
         item = self.list_widget.currentItem()

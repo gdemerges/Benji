@@ -1,22 +1,37 @@
+"""Les réunions passées : une liste à gauche, le compte rendu à droite.
+
+Cette fenêtre était l'héritage le plus visible de Benji — une liste déroulante
+native, un vidage monospace horodaté et une rangée de sept boutons de même
+poids. Elle est reconstruite sur la grammaire du direct : la réunion choisie
+s'affiche dans le **même** transcript, avec la même ligne de temps et la même
+face à lire, si bien que relire une réunion d'il y a trois semaines donne
+exactement la page qu'on regardait pendant qu'elle se disait.
+
+Les actions sont hiérarchisées au lieu d'être alignées : une principale (aplat
+d'encre), des secondaires (texte seul), une destructive (rouge, jamais un aplat,
+et toujours derrière une confirmation).
+"""
+
 import threading
 from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QGuiApplication
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -25,20 +40,37 @@ from benji import export, meetings
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.ui.style import (
-    FONT_MONO,
+    FONT_DISPLAY,
+    FONT_UI,
     current_theme,
+    destructive_button_qss,
+    field_qss,
     install_theme_listener,
+    meta_qss,
     panel_background_qss,
     primary_button_qss,
     secondary_button_qss,
-    text_panel_qss,
 )
+from benji.ui.widgets.transcript_view import TranscriptView
 
 _EXPORT_FORMATS = [
     ("Texte (.txt)", "txt", "Fichier texte (*.txt)"),
     ("Markdown (.md)", "md", "Markdown (*.md)"),
     ("Sous-titres (.srt)", "srt", "SubRip (*.srt)"),
 ]
+
+_SIDEBAR_WIDTH = 232
+# `strftime("%B")` suit la locale C et rendrait « 21 August 2026 » sur un Mac
+# français. La table est plus courte que de trafiquer la locale du process.
+_MOIS = (
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+)
+
+
+def _date_fr(moment: datetime) -> str:
+    return f"{moment.day} {_MOIS[moment.month - 1]} {moment.year} · {moment:%H:%M}"
+_MEETING_ID_ROLE = Qt.ItemDataRole.UserRole
 
 
 class HistoryWindow(QWidget):
@@ -54,84 +86,20 @@ class HistoryWindow(QWidget):
         self._speaker_names: dict[str, str] = {}
         # Réunion affichée. None tant qu'aucune n'existe (rien n'a été transcrit).
         self._meeting_id: str | None = None
-        # Vrai pendant le repeuplement du sélecteur : `currentIndexChanged` émet
-        # à chaque `addItem`, on ne veut pas recharger l'historique à chaque fois.
+        # Vrai pendant le repeuplement de la liste : la sélection change à chaque
+        # insertion, on ne veut pas recharger le transcript à chaque fois.
         self._loading_meetings = False
+
         self.setObjectName("HistoryWindow")
-        self.setWindowTitle("Historique")
+        self.setWindowTitle("Réunions")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.resize(640, 460)
+        self.resize(880, 580)
 
-        # Layout
-        layout = QVBoxLayout()
-        layout.setContentsMargins(16, 16, 16, 12)
-        layout.setSpacing(12)
-
-        # Sélecteur de réunion : l'historique n'est plus un flux plat, on lit et
-        # on exporte une réunion à la fois.
-        picker = QHBoxLayout()
-        picker.setSpacing(8)
-        picker.addWidget(QLabel("Réunion :"))
-        self.meeting_combo = QComboBox()
-        self.meeting_combo.setMinimumWidth(260)
-        self.meeting_combo.currentIndexChanged.connect(self._on_meeting_changed)
-        picker.addWidget(self.meeting_combo, 1)
-        self.rename_meeting_btn = QPushButton("Renommer…")
-        self.rename_meeting_btn.clicked.connect(self._rename_meeting)
-        picker.addWidget(self.rename_meeting_btn)
-        self.new_meeting_btn = QPushButton("Nouvelle réunion")
-        self.new_meeting_btn.clicked.connect(self._new_meeting)
-        picker.addWidget(self.new_meeting_btn)
-        layout.addLayout(picker)
-
-        # Text area
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont(FONT_MONO, 12))
-        layout.addWidget(self.text_edit)
-
-        # Buttons
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(8)
-        self.refresh_btn = QPushButton("Actualiser")
-        self.refresh_btn.clicked.connect(self.reload_meetings)
-        self.clear_btn = QPushButton("Effacer la réunion")
-        self.clear_btn.clicked.connect(self.clear_history)
-        self.copy_btn = QPushButton("Copier")
-        self.copy_btn.clicked.connect(self._copy_to_clipboard)
-        self.export_btn = QPushButton("Exporter…")
-        self.export_btn.clicked.connect(self._open_export_menu)
-        self.speakers_btn = QPushButton("Locuteurs…")
-        self.speakers_btn.clicked.connect(self._rename_speakers)
-        self.summarize_btn = QPushButton("Résumer la réunion")
-        self.summarize_btn.clicked.connect(self._start_summarize)
-        self.close_btn = QPushButton("Fermer")
-        self.close_btn.clicked.connect(self.close)
-
-        # Boutons secondaires (discrets) et principal (accent).
-        self._secondary_buttons = [
-            self.rename_meeting_btn,
-            self.new_meeting_btn,
-            self.refresh_btn,
-            self.clear_btn,
-            self.copy_btn,
-            self.export_btn,
-            self.speakers_btn,
-            self.close_btn,
-        ]
-        for btn in (self.refresh_btn, self.clear_btn, self.copy_btn,
-                    self.export_btn, self.speakers_btn):
-            button_layout.addWidget(btn)
-        button_layout.addWidget(self.summarize_btn)
-        button_layout.addStretch()
-        button_layout.addWidget(self.close_btn)
-        layout.addLayout(button_layout)
-
-        # Stats footer (updated every 2s)
-        self.stats_label = QLabel("")
-        layout.addWidget(self.stats_label)
-
-        self.setLayout(layout)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_sidebar())
+        root.addWidget(self._build_detail(), 1)
 
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self._refresh_stats)
@@ -146,112 +114,206 @@ class HistoryWindow(QWidget):
 
         self.reload_meetings()
 
+    # --- construction ---
+
+    def _build_sidebar(self) -> QWidget:
+        self.sidebar = QWidget()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(_SIDEBAR_WIDTH)
+
+        self.sidebar_title = QLabel("Réunions")
+
+        self.meeting_list = QListWidget()
+        self.meeting_list.setFrameShape(QListWidget.Shape.NoFrame)
+        self.meeting_list.currentRowChanged.connect(self._on_meeting_changed)
+
+        self.new_meeting_btn = QPushButton("＋  Nouvelle réunion")
+        self.new_meeting_btn.clicked.connect(self._new_meeting)
+
+        layout = QVBoxLayout(self.sidebar)
+        layout.setContentsMargins(14, 16, 10, 12)
+        layout.setSpacing(8)
+        layout.addWidget(self.sidebar_title)
+        layout.addWidget(self.meeting_list, 1)
+        layout.addWidget(self.new_meeting_btn)
+        return self.sidebar
+
+    def _build_detail(self) -> QWidget:
+        detail = QWidget()
+        detail.setObjectName("detail")
+
+        # En-tête : le titre de la réunion est l'objet de la page, il est donc
+        # composé comme un titre — et se renomme au clic sur « Renommer ».
+        self.title_label = QLabel("")
+        self.title_label.setWordWrap(True)
+        self.meta_label = QLabel("")
+
+        self.rename_meeting_btn = QPushButton("Renommer")
+        self.rename_meeting_btn.clicked.connect(self._rename_meeting)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        titles = QVBoxLayout()
+        titles.setSpacing(3)
+        titles.addWidget(self.title_label)
+        titles.addWidget(self.meta_label)
+        head.addLayout(titles, 1)
+        head.addWidget(self.rename_meeting_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        self.head_rule = QFrame()
+        self.head_rule.setFrameShape(QFrame.Shape.HLine)
+        self.head_rule.setFixedHeight(1)
+
+        self.transcript = TranscriptView("Aucune transcription dans cette réunion.")
+
+        # Barre d'actions : une principale, des secondaires, une destructive
+        # tenue à l'écart des autres.
+        self.copy_btn = QPushButton("Copier")
+        self.copy_btn.clicked.connect(self._copy_to_clipboard)
+        self.export_btn = QPushButton("Exporter…")
+        self.export_btn.clicked.connect(self._open_export_menu)
+        self.speakers_btn = QPushButton("Locuteurs…")
+        self.speakers_btn.clicked.connect(self._rename_speakers)
+        self.clear_btn = QPushButton("Effacer")
+        self.clear_btn.clicked.connect(self.clear_history)
+        self.summarize_btn = QPushButton("Résumer")
+        self.summarize_btn.clicked.connect(self._start_summarize)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(2)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.export_btn)
+        actions.addWidget(self.speakers_btn)
+        actions.addSpacing(12)
+        actions.addWidget(self.clear_btn)
+        actions.addStretch(1)
+        self.stats_label = QLabel("")
+        actions.addWidget(self.stats_label)
+        actions.addSpacing(12)
+        actions.addWidget(self.summarize_btn)
+
+        layout = QVBoxLayout(detail)
+        layout.setContentsMargins(24, 20, 20, 16)
+        layout.setSpacing(12)
+        layout.addLayout(head)
+        layout.addWidget(self.head_rule)
+        layout.addWidget(self.transcript, 1)
+        layout.addLayout(actions)
+        return detail
+
+    # --- thème ---
+
     def _apply_theme(self) -> None:
         t = current_theme()
+        ink = t.ink
         self.setStyleSheet(
-            panel_background_qss(t, "#HistoryWindow") + text_panel_qss(t)
+            panel_background_qss(t, "#HistoryWindow")
+            + f"""
+            #sidebar {{
+                background-color: {_rgba(t.ink_alpha(3))};
+                border-right: 1px solid {_rgba(t.spine)};
+            }}
+            #detail {{ background: transparent; }}
+            QListWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                color: {_rgba(t.ink_muted)};
+                padding: 7px 9px;
+                border-radius: 7px;
+                margin-bottom: 1px;
+            }}
+            QListWidget::item:hover {{ background-color: {_rgba(t.ink_alpha(5))}; }}
+            QListWidget::item:selected {{
+                background-color: {_rgba(t.ink_alpha(9))};
+                color: {_rgba(ink)};
+            }}
+            """
+            + field_qss(t)
         )
-        for btn in self._secondary_buttons:
+        self.sidebar_title.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 11px; font-weight: 700; "
+            f"letter-spacing: 1.1px; color: {_rgba(t.ink_faint)}; background: transparent;"
+        )
+        self.title_label.setStyleSheet(
+            f"font-family: {FONT_DISPLAY}; font-size: 19px; font-weight: 600; "
+            f"letter-spacing: -0.2px; color: {_rgba(ink)}; background: transparent;"
+        )
+        self.meta_label.setStyleSheet(meta_qss(t))
+        self.stats_label.setStyleSheet(meta_qss(t, 10))
+        self.head_rule.setStyleSheet(f"background-color: {_rgba(t.spine)}; border: none;")
+        for btn in (self.copy_btn, self.export_btn, self.speakers_btn,
+                    self.rename_meeting_btn, self.new_meeting_btn):
             btn.setStyleSheet(secondary_button_qss(t))
+        self.clear_btn.setStyleSheet(destructive_button_qss(t))
         self.summarize_btn.setStyleSheet(primary_button_qss(t))
-        self.stats_label.setStyleSheet(
-            f"color: rgba({t.secondary_label.red()},{t.secondary_label.green()},"
-            f"{t.secondary_label.blue()},{t.secondary_label.alpha()}); "
-            "font-size: 11px; padding: 2px 4px;"
-        )
-
-    def _start_summarize(self):
-        self.summarize_btn.setEnabled(False)
-        self.summarize_btn.setText("Génération en cours…")
-        threading.Thread(target=self._run_summarize, daemon=True).start()
-
-    def _run_summarize(self):
-        from benji.llm.summarizer import save_summary, summarize
-        entries = list(self._entries)
-        if not entries:
-            self._summary_error.emit("Aucune transcription dans cette réunion.")
-            return
-        summary = summarize(entries)
-        if not summary:
-            self._summary_error.emit("Impossible de générer un résumé.")
-            return
-        path = save_summary(summary)
-        self._summary_ready.emit(summary, str(path))
-
-    def _on_summary_ready(self, summary: str, path: str):
-        self.text_edit.append(f"\n{'─' * 60}")
-        self.text_edit.append(f"Résumé de session ({datetime.now().strftime('%H:%M')})\n")
-        self.text_edit.append(summary)
-        self.text_edit.append(f"\n💾 Sauvegardé : {path}")
-        self.summarize_btn.setText("Résumer la réunion")
-        self.summarize_btn.setEnabled(True)
-
-    def _on_summary_error(self, message: str):
-        self.text_edit.append(f"\n[Résumé] {message}")
-        self.summarize_btn.setText("Résumer la réunion")
-        self.summarize_btn.setEnabled(True)
-
-    def load_history(self):
-        if self._meeting_id is None and meetings.current_meeting_id() is not None:
-            # Une réunion s'est ouverte depuis l'affichage (première phrase
-            # transcrite) : resynchroniser le sélecteur plutôt que de laisser
-            # l'écran vide. `reload_meetings` rappelle `load_history`, cette fois
-            # avec un identifiant — pas de récursion.
-            self.reload_meetings()
-            return
-        # Les entrées d'une réunion sont déjà dans l'ordre d'écriture ; les
-        # modules d'export retrient de toute façon sur l'horodatage.
-        if self._meeting_id is None:
-            self._entries = []
-        else:
-            self._entries = self.history.get_for_meeting(self._meeting_id)
-        self._refresh_export_enabled()
-        if not self._entries:
-            self.text_edit.setPlainText("Aucune transcription dans cette réunion.")
-            return
-
-        self.text_edit.setPlainText(export.to_txt(self._entries, self._speaker_names).strip())
-        # Move cursor to end
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.text_edit.setTextCursor(cursor)
+        self.transcript.apply_theme()
 
     # --- réunions ---
 
     def reload_meetings(self) -> None:
-        """Repeuple le sélecteur et réaffiche la réunion sélectionnée.
+        """Repeuple la liste et réaffiche la réunion sélectionnée.
 
         La réunion en cours est présélectionnée quand elle existe ; sinon la plus
         récente. Les entrées antérieures à la notion de réunion (anciennes
-        versions de Benji) apparaissent dans un groupe dédié en fin de liste —
-        elles restent lisibles et exportables au lieu de devenir invisibles.
+        versions de Benji) apparaissent en fin de liste — elles restent lisibles
+        et exportables au lieu de devenir invisibles.
         """
         previous = self._meeting_id
         self._loading_meetings = True
         try:
-            self.meeting_combo.clear()
+            self.meeting_list.clear()
             for meeting in meetings.store().list():
-                self.meeting_combo.addItem(meeting.title, meeting.id)
+                count = len(self.history.get_for_meeting(meeting.id))
+                self._add_row(meeting.title, self._subtitle(meeting, count), meeting.id)
             if self.history.has_legacy_entries():
-                self.meeting_combo.addItem(meetings.LEGACY_TITLE, meetings.LEGACY_ID)
+                count = len(self.history.get_for_meeting(meetings.LEGACY_ID))
+                self._add_row(meetings.LEGACY_TITLE, f"{count} échanges", meetings.LEGACY_ID)
         finally:
             self._loading_meetings = False
 
         target = previous or meetings.current_meeting_id()
-        index = self.meeting_combo.findData(target) if target else -1
-        if index < 0:
-            index = 0 if self.meeting_combo.count() else -1
-        self.meeting_combo.setCurrentIndex(index)
-        self._meeting_id = self.meeting_combo.currentData() if index >= 0 else None
+        row = self._row_for(target) if target else -1
+        if row < 0:
+            row = 0 if self.meeting_list.count() else -1
+        self.meeting_list.setCurrentRow(row)
+        self._meeting_id = self._id_at(row)
         self._refresh_meeting_controls()
         self.load_history()
 
-    def _on_meeting_changed(self, index: int) -> None:
-        if getattr(self, "_loading_meetings", False):
+    def _add_row(self, title: str, subtitle: str, meeting_id: str) -> None:
+        item = QListWidgetItem(f"{title}\n{subtitle}")
+        item.setData(_MEETING_ID_ROLE, meeting_id)
+        self.meeting_list.addItem(item)
+
+    @staticmethod
+    def _subtitle(meeting, count: int) -> str:
+        day = meeting.started_at.strftime("%d/%m")
+        echanges = f"{count} échange{'s' if count > 1 else ''}"
+        if meeting.ended_at:
+            minutes = max(1, int((meeting.ended_at - meeting.started_at).total_seconds() // 60))
+            return f"{day} · {minutes} min · {echanges}"
+        return f"{day} · en cours · {echanges}"
+
+    def _row_for(self, meeting_id: str) -> int:
+        for row in range(self.meeting_list.count()):
+            if self.meeting_list.item(row).data(_MEETING_ID_ROLE) == meeting_id:
+                return row
+        return -1
+
+    def _id_at(self, row: int) -> str | None:
+        if row < 0 or row >= self.meeting_list.count():
+            return None
+        return self.meeting_list.item(row).data(_MEETING_ID_ROLE)
+
+    def _on_meeting_changed(self, row: int) -> None:
+        if self._loading_meetings:
             return
-        self._meeting_id = self.meeting_combo.itemData(index)
-        # Les noms de locuteurs sont propres à une réunion : A n'est pas la même
-        # personne d'une réunion à l'autre.
+        self._meeting_id = self._id_at(row)
+        # Les noms de locuteurs sont propres à une réunion : « A » n'est pas la
+        # même personne d'une réunion à l'autre.
         self._speaker_names = {}
         self._refresh_meeting_controls()
         self.load_history()
@@ -261,13 +323,24 @@ class HistoryWindow(QWidget):
         self.rename_meeting_btn.setEnabled(real)
         self.clear_btn.setEnabled(self._meeting_id is not None)
 
-    def _rename_meeting(self) -> None:
+    def _current_meeting(self):
         if self._meeting_id is None or self._meeting_id == meetings.LEGACY_ID:
+            return None
+        return meetings.store().get(self._meeting_id)
+
+    def _current_title(self) -> str:
+        row = self.meeting_list.currentRow()
+        if row < 0:
+            return ""
+        return self.meeting_list.item(row).text().split("\n")[0]
+
+    def _rename_meeting(self) -> None:
+        if self._current_meeting() is None:
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("Renommer la réunion")
         layout = QVBoxLayout(dialog)
-        edit = QLineEdit(self.meeting_combo.currentText())
+        edit = QLineEdit(self._current_title())
         edit.selectAll()
         layout.addWidget(edit)
         buttons = QDialogButtonBox(
@@ -284,8 +357,8 @@ class HistoryWindow(QWidget):
     def _new_meeting(self) -> None:
         """Clôt la réunion en cours et en ouvre une nouvelle.
 
-        Ce qui suit sera rattaché à la nouvelle : c'est le geste « on passe au
-        sujet suivant » sans avoir à redémarrer l'app.
+        C'est le geste « on passe au sujet suivant » sans redémarrer l'app : ce
+        qui sera dit ensuite est rattaché à la nouvelle réunion.
         """
         meeting = meetings.start_meeting()
         self._meeting_id = meeting.id
@@ -293,18 +366,54 @@ class HistoryWindow(QWidget):
         self.reload_meetings()
 
     def _meeting_slug(self) -> str:
-        title = self.meeting_combo.currentText() or "transcription"
-        keep = [c if c.isalnum() else "-" for c in title.lower()]
-        slug = "".join(keep).strip("-")
+        title = self._current_title() or "transcription"
+        slug = "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-")
         while "--" in slug:
             slug = slug.replace("--", "-")
         return slug or "transcription"
+
+    # --- transcript ---
+
+    def load_history(self):
+        if self._meeting_id is None and meetings.current_meeting_id() is not None:
+            # Une réunion s'est ouverte depuis l'affichage (première phrase
+            # transcrite) : resynchroniser la liste plutôt que de laisser l'écran
+            # vide. `reload_meetings` rappelle `load_history`, cette fois avec un
+            # identifiant — pas de récursion.
+            self.reload_meetings()
+            return
+        self._entries = (
+            [] if self._meeting_id is None
+            else self.history.get_for_meeting(self._meeting_id)
+        )
+        self.title_label.setText(self._current_title() or "Aucune réunion")
+        self.meta_label.setText(self._meta_text())
+        self.transcript.set_entries(self._entries, self._speaker_names)
+        self._refresh_export_enabled()
+
+    def _meta_text(self) -> str:
+        if not self._entries:
+            return "Rien n'a encore été dit."
+        meeting = self._current_meeting()
+        started = meeting.started_at if meeting else None
+        parts = []
+        if started is not None:
+            parts.append(_date_fr(started))
+        count = len(self._entries)
+        parts.append(f"{count} échange{'s' if count > 1 else ''}")
+        speakers = export.distinct_speakers(self._entries)
+        if speakers:
+            parts.append(f"{len(speakers)} locuteurs" if len(speakers) > 1 else "1 locuteur")
+        return "  ·  ".join(parts)
 
     def _refresh_export_enabled(self):
         has_entries = bool(self._entries)
         self.copy_btn.setEnabled(has_entries)
         self.export_btn.setEnabled(has_entries)
         self.speakers_btn.setEnabled(bool(export.distinct_speakers(self._entries)))
+        self.summarize_btn.setEnabled(has_entries)
+
+    # --- actions ---
 
     def _copy_to_clipboard(self):
         if not self._entries:
@@ -322,7 +431,9 @@ class HistoryWindow(QWidget):
     def _export(self, fmt: str, file_filter: str):
         default_name = f"benji-{self._meeting_slug()}.{fmt}"
         default_path = str(Path.home() / "Downloads" / default_name)
-        path, _ = QFileDialog.getSaveFileName(self, "Exporter la transcription", default_path, file_filter)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter la transcription", default_path, file_filter
+        )
         if not path:
             return
         content = export.render(self._entries, fmt, self._speaker_names)
@@ -336,7 +447,7 @@ class HistoryWindow(QWidget):
         if not labels:
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle("Renommer les locuteurs")
+        dialog.setWindowTitle("Nommer les locuteurs")
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
         edits: dict[str, QLineEdit] = {}
@@ -366,10 +477,9 @@ class HistoryWindow(QWidget):
         """Efface la réunion affichée — jamais tout l'historique d'un clic."""
         if self._meeting_id is None:
             return
-        title = self.meeting_combo.currentText()
         confirm = QMessageBox.question(
             self, "Benji",
-            f"Effacer définitivement la transcription de « {title} » ?",
+            f"Effacer définitivement la transcription de « {self._current_title()} » ?",
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
@@ -378,11 +488,45 @@ class HistoryWindow(QWidget):
         self.history.clear(self._meeting_id)
         if self._meeting_id != meetings.LEGACY_ID:
             meetings.store().delete(self._meeting_id)
+        self._meeting_id = None
         self._speaker_names = {}
         self.reload_meetings()
 
-    def _refresh_stats(self):
-        if self.stats is None:
-            self.stats_label.setText("")
+    # --- résumé ---
+
+    def _start_summarize(self):
+        self.summarize_btn.setEnabled(False)
+        self.summarize_btn.setText("Génération…")
+        threading.Thread(target=self._run_summarize, daemon=True).start()
+
+    def _run_summarize(self):
+        from benji.llm.summarizer import save_summary, summarize
+        entries = list(self._entries)
+        if not entries:
+            self._summary_error.emit("Aucune transcription dans cette réunion.")
             return
-        self.stats_label.setText(self.stats.format_footer())
+        summary = summarize(entries)
+        if not summary:
+            self._summary_error.emit("Impossible de générer un résumé.")
+            return
+        path = save_summary(summary)
+        self._summary_ready.emit(summary, str(path))
+
+    def _on_summary_ready(self, summary: str, path: str):
+        self.summarize_btn.setText("Résumer")
+        self._refresh_export_enabled()
+        QMessageBox.information(
+            self, "Résumé de la réunion", f"{summary}\n\nEnregistré : {path}"
+        )
+
+    def _on_summary_error(self, message: str):
+        self.summarize_btn.setText("Résumer")
+        self._refresh_export_enabled()
+        QMessageBox.warning(self, "Benji", message)
+
+    def _refresh_stats(self):
+        self.stats_label.setText("" if self.stats is None else self.stats.format_footer())
+
+
+def _rgba(color) -> str:
+    return f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"

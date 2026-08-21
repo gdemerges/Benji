@@ -8,7 +8,7 @@ from benji.ui.live_tab import LiveTab
 def _items(tab: LiveTab):
     """ChatItems présents dans la colonne (sans le stretch final)."""
     out = []
-    for i in range(tab.content_layout.count() - 1):
+    for i in range(tab.content_layout.count()):
         w = tab.content_layout.itemAt(i).widget()
         if w is not None:
             out.append(w)
@@ -136,3 +136,18 @@ def test_trimmed_items_cannot_receive_a_late_correction(qtbot, monkeypatch):
     assert all(c in _items(tab) for c in tab._correctable)
     tab.on_event(_final("Corrigée.", "A", 0, corrected=True))  # seq retiré : sans effet
     assert [i._text for i in _items(tab)] == ["Phrase 3.", "Phrase 4."]
+
+
+def test_le_transcript_est_ancre_en_bas(qtbot):
+    """Le ressort est en tête : la ligne en cours colle à la dernière phrase.
+
+    Ancré en haut, un début de réunion laissait la ligne vivante flotter à des
+    centaines de pixels sous le texte, au bas d'une fenêtre vide.
+    """
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.on_event(_final("Bonjour.", "A", 1))
+
+    first = tab.content_layout.itemAt(0)
+    assert first.widget() is None  # un ressort, pas une ligne
+    assert first.expandingDirections() != 0

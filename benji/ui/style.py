@@ -8,8 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QGuiApplication, QPalette
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication
+from PyQt6.QtWidgets import QWidget
 
 from benji.config import IS_MACOS
 
@@ -25,27 +25,89 @@ def vibrancy_enabled() -> bool:
     return os.environ.get("BENJI_VIBRANCY", "").lower() in ("1", "true", "yes")
 
 
+# --- Tokens de couleur ------------------------------------------------------
+#
+# Direction : Benji est un instrument sténographique, pas une app système. Deux
+# règles portent tout le reste.
+#
+# 1. **Une seule couleur saturée, le rouge d'enregistrement.** Il ne signifie
+#    qu'une chose : « on est en train de prendre au mot, maintenant ». Il n'est
+#    donc jamais utilisé pour une action — un bouton principal rouge se lirait
+#    comme un danger sur macOS. L'action principale est un aplat d'encre.
+# 2. **Le papier est froid.** Un gris très légèrement bleuté, pas un crème :
+#    l'écran est un instrument de précision, pas une page imprimée.
+#
+# Les couleurs ne sont plus dérivées de la couleur d'accentuation du système :
+# c'est précisément ce qui faisait ressembler Benji à une boîte de dialogue.
+
+_LIGHT = {
+    "paper": QColor("#F7F8FA"),
+    "card": QColor(255, 255, 255, 224),
+    "ink": QColor("#16181D"),
+    "record": QColor("#E5484D"),
+}
+_DARK = {
+    "paper": QColor("#14161A"),
+    "card": QColor(255, 255, 255, 13),
+    "ink": QColor("#E9ECF1"),
+    "record": QColor("#FF5C61"),
+}
+
+
 @dataclass(frozen=True)
 class Theme:
     is_dark: bool
-    label: QColor
-    secondary_label: QColor
-    tertiary_label: QColor
-    quaternary_label: QColor
-    accent: QColor
-    live_red: QColor
-    window_background: QColor
-    separator: QColor
+    paper: QColor      # fond de fenêtre
+    card: QColor       # surface surélevée (panneaux, champs)
+    ink: QColor        # texte principal
+    ink_muted: QColor  # texte secondaire
+    ink_faint: QColor  # métadonnées, horodatages
+    ink_ghost: QColor  # traits, états désactivés
+    spine: QColor      # la ligne de temps et les séparateurs
+    record: QColor     # le direct — la seule couleur saturée
+
+    # --- alias hérités (le code existant lit encore ces noms) ---
+    @property
+    def label(self) -> QColor:
+        return self.ink
+
+    @property
+    def secondary_label(self) -> QColor:
+        return self.ink_muted
+
+    @property
+    def tertiary_label(self) -> QColor:
+        return self.ink_faint
+
+    @property
+    def quaternary_label(self) -> QColor:
+        return self.ink_ghost
+
+    @property
+    def window_background(self) -> QColor:
+        return self.paper
+
+    @property
+    def separator(self) -> QColor:
+        return self.spine
+
+    @property
+    def accent(self) -> QColor:
+        """Le direct. Réservé à l'état « en train d'enregistrer »."""
+        return self.record
+
+    @property
+    def live_red(self) -> QColor:
+        return self.record
 
     def accent_alpha(self, pct: int) -> QColor:
-        c = QColor(self.accent)
-        c.setAlpha(int(255 * pct / 100))
-        return c
+        return self.color_alpha(self.accent, pct)
+
+    def ink_alpha(self, pct: int) -> QColor:
+        return self.color_alpha(self.ink, pct)
 
     def label_alpha(self, pct: int) -> QColor:
-        c = QColor(self.label)
-        c.setAlpha(int(255 * pct / 100))
-        return c
+        return self.ink_alpha(pct)
 
     @staticmethod
     def color_alpha(color: QColor, pct: int) -> QColor:
@@ -62,30 +124,26 @@ def _is_dark() -> bool:
         return False
 
 
+def _alpha(color: QColor, pct: int) -> QColor:
+    c = QColor(color)
+    c.setAlpha(int(255 * pct / 100))
+    return c
+
+
 def current_theme() -> Theme:
     dark = _is_dark()
-    if dark:
-        return Theme(
-            is_dark=True,
-            label=QColor(255, 255, 255, 230),
-            secondary_label=QColor(255, 255, 255, 153),
-            tertiary_label=QColor(255, 255, 255, 102),
-            quaternary_label=QColor(255, 255, 255, 51),
-            accent=QApplication.palette().color(QPalette.ColorRole.Highlight),
-            live_red=QColor("#FF453A"),
-            window_background=QColor(30, 30, 30),
-            separator=QColor(255, 255, 255, 38),
-        )
+    p = _DARK if dark else _LIGHT
+    ink = p["ink"]
     return Theme(
-        is_dark=False,
-        label=QColor(0, 0, 0, 217),
-        secondary_label=QColor(0, 0, 0, 153),
-        tertiary_label=QColor(0, 0, 0, 102),
-        quaternary_label=QColor(0, 0, 0, 38),
-        accent=QApplication.palette().color(QPalette.ColorRole.Highlight),
-        live_red=QColor("#FF3B30"),
-        window_background=QColor(246, 246, 246),
-        separator=QColor(0, 0, 0, 25),
+        is_dark=dark,
+        paper=p["paper"],
+        card=p["card"],
+        ink=ink,
+        ink_muted=_alpha(ink, 62),
+        ink_faint=_alpha(ink, 38),
+        ink_ghost=_alpha(ink, 16),
+        spine=_alpha(ink, 14 if dark else 12),
+        record=p["record"],
     )
 
 
@@ -94,31 +152,72 @@ def install_theme_listener(callback: Callable[[], None]) -> None:
     QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _scheme: callback())
 
 
-# Speaker colors: a fixed, legible-on-both-themes palette. A label maps to a
-# stable index so the same speaker always keeps the same color across the
-# overlay and the chat-log.
-_SPEAKER_PALETTE = [
-    QColor("#0A84FF"),  # blue
-    QColor("#FF375F"),  # pink
-    QColor("#30D158"),  # green
-    QColor("#FF9F0A"),  # orange
-    QColor("#BF5AF2"),  # purple
-    QColor("#40C8E0"),  # teal
-    QColor("#FFD60A"),  # yellow
-    QColor("#5E5CE6"),  # indigo
+# Couleurs de locuteur : une **famille sourde**, pas un arc-en-ciel. Ce sont des
+# tiges de quelques pixels le long de la ligne de temps ; elles doivent se
+# distinguer sans crier, et surtout ne jamais rivaliser avec le rouge du direct,
+# seule couleur saturée de l'interface. Cinq teintes suffisent : au-delà, une
+# réunion devient illisible bien avant de manquer de couleurs.
+_SPEAKER_PALETTE_LIGHT = [
+    QColor("#5B6C8F"),  # ardoise
+    QColor("#A2604B"),  # terre
+    QColor("#5C7A52"),  # mousse
+    QColor("#7A5B7E"),  # prune
+    QColor("#8A7238"),  # ocre
+]
+_SPEAKER_PALETTE_DARK = [
+    QColor("#8FA3CC"),
+    QColor("#D69277"),
+    QColor("#8FB183"),
+    QColor("#B392B8"),
+    QColor("#C4A863"),
 ]
 
 
-def speaker_color(label: str) -> QColor:
-    """Stable, distinct color for a speaker label (e.g. 'A', 'B', 'S26')."""
+def speaker_color(label: str, on_dark: bool | None = None) -> QColor:
+    """Couleur stable et lisible pour un locuteur (« A », « B », « S26 »…).
+
+    `on_dark` force la variante claire de la famille : l'overlay est posé sur un
+    fond noir quel que soit le thème du système, les teintes sombres y seraient
+    illisibles. None = suit le thème courant.
+    """
+    dark = _is_dark() if on_dark is None else on_dark
+    palette = _SPEAKER_PALETTE_DARK if dark else _SPEAKER_PALETTE_LIGHT
     key = sum(ord(c) for c in label) if label else 0
-    return QColor(_SPEAKER_PALETTE[key % len(_SPEAKER_PALETTE)])
+    return QColor(palette[key % len(palette)])
 
 
-# Font stacks
+# --- Tokens typographiques --------------------------------------------------
+#
+# Trois voix, volontairement distinctes : l'interface parle en SF Pro (la voix de
+# l'app), les paroles transcrites sont composées en **New York**, le serif système
+# de macOS (la voix des gens — c'est un compte rendu, pas un fil de discussion), et
+# le temps est en SF Mono, tabulaire, pour que les ticks de la ligne de temps
+# s'alignent au pixel. Voir d'un coup d'œil ce qui a été *dit* de ce que l'app
+# *dit* est la moitié de la lisibilité d'un transcript.
 FONT_UI = '"-apple-system", "SF Pro Text", system-ui, sans-serif'
 FONT_DISPLAY = '"-apple-system", "SF Pro Display", "SF Pro Text", system-ui, sans-serif'
+FONT_READING = '"New York", "Iowan Old Style", Charter, Georgia, serif'
 FONT_MONO = '"SF Mono", Menlo, monospace'
+
+
+def reading_font(size: int = 11) -> QFont:
+    """La face à lire, en `QFont` — pas en pile CSS.
+
+    `QTextBrowser.setMarkdown` compose lui-même les formats de caractère et
+    ignore `setDefaultStyleSheet` : sur un document markdown, seule la fonte par
+    défaut du document a un effet. On résout donc la première famille réellement
+    installée plutôt que d'espérer qu'une pile CSS soit lue.
+
+    `size` est en **points** (unité de QFont), pas en pixels comme le reste des
+    helpers QSS : 11 pt tombe à peu près sur les 15 px du transcript.
+    """
+    for family in ("New York", "Iowan Old Style", "Charter", "Georgia"):
+        if family in QFontDatabase.families():
+            return QFont(family, size)
+    font = QFont()
+    font.setStyleHint(QFont.StyleHint.Serif)
+    font.setPointSize(size)
+    return font
 
 
 def _rgba(color: QColor) -> str:
@@ -129,82 +228,154 @@ def _rgb(color: QColor) -> str:
     return f"rgb({color.red()},{color.green()},{color.blue()})"
 
 
-# --- QSS helpers partagés (source de vérité pour le look des fenêtres) --------
-# Utilisés par les fenêtres héritées (history / live summary) pour rester
-# cohérentes avec `main_window`, sans dupliquer les couleurs en dur.
+# --- Helpers QSS ------------------------------------------------------------
+# Source de vérité du look des fenêtres. Toute couleur en dur ailleurs est un bug.
 
 
 def panel_background_qss(theme: Theme, selector: str = "QWidget") -> str:
-    """Dégradé de fond vertical subtil, identique à la fenêtre principale."""
-    bg = theme.window_background
-    delta = 6 if theme.is_dark else 5
-    top = bg.lighter(100 + delta)
-    bottom = bg.darker(100 + delta)
+    """Fond de fenêtre : un aplat de papier, franc.
+
+    Plus de dégradé vertical : un dégradé sur un fond de fenêtre est un tic des
+    années 2010 qui salit la couleur sans rien apporter — le papier doit être
+    d'un seul ton pour que la ligne de temps s'y détache.
+    """
+    return f"""
+    {selector} {{ background-color: {_rgb(theme.paper)}; }}"""
+
+
+def reading_qss(theme: Theme, size: int = 15, color: QColor | None = None) -> str:
+    """Composition des paroles transcrites : serif, interligne large."""
+    return (
+        f"font-family: {FONT_READING}; font-size: {size}px; "
+        f"line-height: 1.7; color: {_rgba(color or theme.ink)}; background: transparent;"
+    )
+
+
+def meta_qss(theme: Theme, size: int = 11) -> str:
+    """Métadonnées (heures, compteurs) : mono, tabulaire, discret."""
+    return (
+        f"font-family: {FONT_MONO}; font-size: {size}px; "
+        f"letter-spacing: 0.3px; color: {_rgba(theme.ink_faint)}; background: transparent;"
+    )
+
+
+def card_qss(theme: Theme, selector: str = "QWidget", radius: int = 10) -> str:
+    """Surface surélevée : carte claire sur le papier, trait d'un cheveu."""
     return f"""
     {selector} {{
-        background-color: qlineargradient(
-            x1:0, y1:0, x2:0, y2:1,
-            stop:0 {_rgb(top)}, stop:1 {_rgb(bottom)}
-        );
+        background-color: {_rgba(theme.card)};
+        border: 1px solid {_rgba(theme.spine)};
+        border-radius: {radius}px;
     }}"""
 
 
 def text_panel_qss(theme: Theme) -> str:
-    """QTextEdit en lecture : fond carte adaptive, texte label, coins arrondis."""
-    card = theme.label_alpha(4)
+    """Panneau de lecture (QTextEdit) : c'est un document, pas un log."""
     return f"""
     QTextEdit {{
-        font-family: {FONT_MONO};
-        font-size: 12px;
-        color: {_rgba(theme.label)};
-        background-color: {_rgba(card)};
-        border: 1px solid {_rgba(theme.separator)};
-        border-radius: 8px;
-        padding: 10px;
-        selection-background-color: {_rgba(theme.accent_alpha(40))};
-        selection-color: {_rgba(theme.label)};
+        font-family: {FONT_READING};
+        font-size: 15px;
+        color: {_rgba(theme.ink)};
+        background-color: transparent;
+        border: none;
+        padding: 4px 0;
+        selection-background-color: {_rgba(theme.ink_alpha(16))};
+        selection-color: {_rgba(theme.ink)};
     }}"""
 
 
 def primary_button_qss(theme: Theme) -> str:
-    """Bouton d'action principal : rempli à la couleur d'accentuation."""
-    accent = theme.accent
+    """Action principale : aplat d'encre.
+
+    Volontairement pas rouge — le rouge ne dit qu'une chose dans Benji, « on
+    enregistre ». Un bouton rouge sur macOS se lit comme un danger.
+    """
+    fg = theme.paper if theme.is_dark else QColor("#FFFFFF")
     return f"""
     QPushButton {{
         font-family: {FONT_UI};
         font-size: 12px;
-        font-weight: 500;
-        color: #ffffff;
-        background-color: {_rgb(accent)};
+        font-weight: 600;
+        color: {_rgb(fg)};
+        background-color: {_rgba(theme.ink_alpha(92))};
         border: none;
-        padding: 6px 14px;
-        border-radius: 6px;
+        padding: 7px 16px;
+        border-radius: 7px;
     }}
-    QPushButton:hover {{ background-color: {_rgba(theme.accent_alpha(86))}; }}
+    QPushButton:hover {{ background-color: {_rgba(theme.ink)}; }}
+    QPushButton:pressed {{ background-color: {_rgba(theme.ink_alpha(78))}; }}
     QPushButton:disabled {{
-        background-color: {_rgba(theme.accent_alpha(35))};
-        color: rgba(255,255,255,160);
+        background-color: {_rgba(theme.ink_alpha(10))};
+        color: {_rgba(theme.ink_faint)};
     }}"""
 
 
 def secondary_button_qss(theme: Theme) -> str:
-    """Bouton secondaire : rempli discret, teinte label, hover plus marqué."""
-    label = theme.label
-    fill = theme.label_alpha(7)
-    hover = theme.label_alpha(13)
+    """Action secondaire : texte d'encre, fond qui n'apparaît qu'au survol."""
     return f"""
     QPushButton {{
         font-family: {FONT_UI};
         font-size: 12px;
         font-weight: 500;
-        color: {_rgba(label)};
-        background-color: {_rgba(fill)};
+        color: {_rgba(theme.ink_muted)};
+        background-color: transparent;
         border: none;
-        padding: 6px 12px;
-        border-radius: 6px;
+        padding: 7px 12px;
+        border-radius: 7px;
     }}
-    QPushButton:hover {{ background-color: {_rgba(hover)}; }}
-    QPushButton:disabled {{ color: {_rgba(theme.tertiary_label)}; background-color: {_rgba(theme.label_alpha(4))}; }}"""
+    QPushButton:hover {{
+        color: {_rgba(theme.ink)};
+        background-color: {_rgba(theme.ink_alpha(7))};
+    }}
+    QPushButton:pressed {{ background-color: {_rgba(theme.ink_alpha(12))}; }}
+    QPushButton:disabled {{ color: {_rgba(theme.ink_ghost)}; background-color: transparent; }}"""
+
+
+def destructive_button_qss(theme: Theme) -> str:
+    """Action destructive : rouge, mais jamais un aplat — on n'invite pas à cliquer."""
+    return f"""
+    QPushButton {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        font-weight: 500;
+        color: {_rgba(theme.record)};
+        background-color: transparent;
+        border: none;
+        padding: 7px 12px;
+        border-radius: 7px;
+    }}
+    QPushButton:hover {{ background-color: {_rgba(Theme.color_alpha(theme.record, 12))}; }}
+    QPushButton:disabled {{ color: {_rgba(theme.ink_ghost)}; }}"""
+
+
+def field_qss(theme: Theme) -> str:
+    """Champs et listes déroulantes : alignés sur la carte, pas sur le natif Qt."""
+    return f"""
+    QComboBox, QLineEdit {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        color: {_rgba(theme.ink)};
+        background-color: {_rgba(theme.card)};
+        border: 1px solid {_rgba(theme.spine)};
+        border-radius: 7px;
+        padding: 6px 10px;
+        selection-background-color: {_rgba(theme.ink_alpha(16))};
+        selection-color: {_rgba(theme.ink)};
+    }}
+    QComboBox:hover, QLineEdit:hover {{ border-color: {_rgba(theme.ink_alpha(24))}; }}
+    QComboBox::drop-down {{ border: none; width: 22px; }}
+    QComboBox QAbstractItemView {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        color: {_rgba(theme.ink)};
+        background-color: {_rgb(theme.paper)};
+        border: 1px solid {_rgba(theme.spine)};
+        border-radius: 7px;
+        padding: 4px;
+        outline: none;
+        selection-background-color: {_rgba(theme.ink_alpha(10))};
+        selection-color: {_rgba(theme.ink)};
+    }}"""
 
 
 def apply_window_vibrancy(window: QWidget) -> bool:

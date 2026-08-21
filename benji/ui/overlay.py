@@ -500,7 +500,8 @@ class SubtitleOverlay(QWidget):
                     # Colored speaker prefix; escape the body so stray <,&,> in the
                     # transcription aren't interpreted as markup.
                     from html import escape
-                    c = speaker_color(speaker)
+                    # L'overlay est toujours sur fond noir : variante claire.
+                    c = speaker_color(speaker, on_dark=True)
                     self.label.setTextFormat(Qt.TextFormat.RichText)
                     self.label.setText(
                         f'<span style="color:{c.name()};font-weight:bold;">{escape(speaker)}</span> '

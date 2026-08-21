@@ -1,4 +1,12 @@
-"""Pill statut : forme d'onde signature + label + timer session."""
+"""Pastille de statut : forme d'onde, réunion en cours, durée.
+
+Quand un `title_provider` est fourni, la pastille affiche le **nom de la réunion
+en cours** plutôt que « En écoute » / « En attente » : l'onde dit déjà si Benji
+entend quelque chose, répéter l'état en toutes lettres à côté d'elle est une
+information de trop, alors que savoir *dans quelle réunion* on est ne se lit
+nulle part ailleurs dans la fenêtre. L'état ne reprend la main que lorsqu'il
+n'est plus déductible de l'onde : micro en pause.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +20,10 @@ from benji.ui.widgets.waveform import WaveformDot
 
 
 class StatusPill(QWidget):
-    def __init__(self, session_start: datetime, parent=None):
+    def __init__(self, session_start: datetime, title_provider=None, parent=None):
         super().__init__(parent)
         self._session_start = session_start
+        self._title_provider = title_provider
         self._speaking = False
         self._paused = False
 
@@ -37,6 +46,7 @@ class StatusPill(QWidget):
         self._tick_timer.timeout.connect(self._tick)
         self._tick_timer.start()
 
+        self._refresh_state()
         self.apply_theme()
 
     def apply_theme(self) -> None:
@@ -54,6 +64,11 @@ class StatusPill(QWidget):
                 background: transparent;
             }}
         """)
+        self.status_label.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 12px; font-weight: 600; "
+            f"color: rgba({t.ink.red()},{t.ink.green()},{t.ink.blue()},{t.ink.alpha()}); "
+            "background: transparent;"
+        )
         self.timer_label.setStyleSheet(
             f"font-family: {FONT_MONO}; font-size: 12px; "
             f"color: rgba({t.tertiary_label.red()},{t.tertiary_label.green()},{t.tertiary_label.blue()},{t.tertiary_label.alpha()}); "
@@ -79,9 +94,17 @@ class StatusPill(QWidget):
     def _refresh_state(self) -> None:
         if self._paused:
             self.status_label.setText("Micro en pause")
+        elif self._title_provider is not None:
+            self.status_label.setText(self._title() or "Aucune réunion en cours")
         else:
             self.status_label.setText("En écoute" if self._speaking else "En attente")
         self._refresh_wave()
+
+    def _title(self) -> str:
+        try:
+            return (self._title_provider() or "").strip()
+        except Exception:
+            return ""
 
     def _refresh_wave(self) -> None:
         t = current_theme()
@@ -92,6 +115,12 @@ class StatusPill(QWidget):
         self.wave.set_active(self._speaking and not self._paused)
 
     def _tick(self) -> None:
+        # Le titre peut changer sous nos pieds (nouvelle réunion, renommage) :
+        # il est relu à chaque seconde, c'est une lecture en mémoire.
+        if self._title_provider is not None and not self._paused:
+            title = self._title() or "Aucune réunion en cours"
+            if title != self.status_label.text():
+                self.status_label.setText(title)
         delta: timedelta = datetime.now() - self._session_start
         total = int(delta.total_seconds())
         h, rem = divmod(total, 3600)

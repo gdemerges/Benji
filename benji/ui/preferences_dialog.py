@@ -315,7 +315,9 @@ class PreferencesDialog(QDialog):
         label = t.label
         sec = t.secondary_label
         tert = t.tertiary_label
-        accent = t.accent
+        # Le bouton d'enregistrement est un aplat d'encre : dans Benji le rouge
+        # ne dit qu'une chose, « on enregistre » — pas « valider ».
+        on_ink = "#ffffff" if not t.is_dark else f"#{t.paper.red():02x}{t.paper.green():02x}{t.paper.blue():02x}"
         sep = t.separator
         field_bg = t.label_alpha(6 if t.is_dark else 4)
         field_border = t.label_alpha(14 if t.is_dark else 12)
@@ -367,7 +369,7 @@ class PreferencesDialog(QDialog):
                 min-height: 22px;
             }}
             QComboBox:hover, QFontComboBox:hover, QSpinBox:hover {{
-                border-color: {rgba(t.accent_alpha(45))};
+                border-color: {rgba(t.ink_alpha(40))};
             }}
             QComboBox::drop-down, QFontComboBox::drop-down {{ border: none; width: 18px; }}
             QSpinBox::up-button, QSpinBox::down-button {{ width: 16px; border: none; }}
@@ -381,16 +383,14 @@ class PreferencesDialog(QDialog):
             QPushButton#accent_btn {{
                 font-family: {FONT_UI};
                 font-size: 13px;
-                font-weight: 500;
-                color: #ffffff;
-                background-color: rgb({accent.red()},{accent.green()},{accent.blue()});
+                font-weight: 600;
+                color: {on_ink};
+                background-color: {rgba(t.ink_alpha(92))};
                 border: none;
                 padding: 7px 18px;
-                border-radius: 6px;
+                border-radius: 7px;
             }}
-            QPushButton#accent_btn:hover {{
-                background-color: rgba({accent.red()},{accent.green()},{accent.blue()},220);
-            }}
+            QPushButton#accent_btn:hover {{ background-color: {rgba(t.ink)}; }}
             QPushButton#ghost_btn {{
                 font-family: {FONT_UI};
                 font-size: 13px;

@@ -1,21 +1,30 @@
-"""Rolling summary window updated by LiveSummarizer.
+"""Résumé en direct : ce que la réunion a dit jusqu'ici, réécrit à intervalle.
 
-Supports both whole-summary appends and token-by-token streaming.
+La fenêtre affichait le markdown brut dans une boîte monospace — on y lisait
+`**Décision**` au lieu de voir une décision. Elle rend désormais le même
+markdown, avec la même feuille de style, que l'onglet Résumés.
+
+Le texte arrive soit d'un coup, soit jeton par jeton (streaming) : dans les deux
+cas la source markdown est accumulée puis re-rendue, ce qui permet de voir la
+mise en forme se composer pendant l'écriture.
 """
 
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QTextCursor
-from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from benji.ui.style import (
-    FONT_MONO,
+    FONT_UI,
     current_theme,
     install_theme_listener,
+    meta_qss,
     panel_background_qss,
-    text_panel_qss,
 )
+from benji.ui.widgets.markdown_view import MarkdownView
+from benji.ui.widgets.waveform import WaveformDot
+
+_PLACEHOLDER = "En attente du premier résumé…"
 
 
 class LiveSummaryWindow(QWidget):
@@ -28,17 +37,30 @@ class LiveSummaryWindow(QWidget):
         self.setObjectName("LiveSummaryWindow")
         self.setWindowTitle("Résumé en direct")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.resize(520, 420)
+        self.resize(560, 460)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(16, 16, 16, 16)
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont(FONT_MONO, 12))
-        self.text_edit.setPlainText("En attente du premier résumé…")
-        layout.addWidget(self.text_edit)
-        self.setLayout(layout)
+        # En-tête : l'onde bat pendant la rédaction, l'heure dit de quand date
+        # ce qu'on lit — un résumé sans horodatage ne veut rien dire.
+        self.wave = WaveformDot(bar_width=2, gap=2, height=12)
+        self.title = QLabel("Résumé en direct")
+        self.stamp = QLabel("")
 
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        head.addWidget(self.wave, 0, Qt.AlignmentFlag.AlignVCenter)
+        head.addWidget(self.title, 0)
+        head.addStretch(1)
+        head.addWidget(self.stamp, 0)
+
+        self.view = MarkdownView()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(8)
+        layout.addLayout(head)
+        layout.addWidget(self.view, 1)
+
+        self._markdown = ""
         self._streaming = False
 
         self._summary_signal.connect(self._finalize_summary)
@@ -47,14 +69,21 @@ class LiveSummaryWindow(QWidget):
 
         install_theme_listener(self._apply_theme)
         self._apply_theme()
+        self.view.set_markdown(f"_{_PLACEHOLDER}_")
 
     def _apply_theme(self) -> None:
         t = current_theme()
-        self.setStyleSheet(
-            panel_background_qss(t, "#LiveSummaryWindow") + text_panel_qss(t)
+        self.setStyleSheet(panel_background_qss(t, "#LiveSummaryWindow"))
+        self.title.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 12px; font-weight: 600; "
+            f"color: rgba({t.ink.red()},{t.ink.green()},{t.ink.blue()},{t.ink.alpha()}); "
+            "background: transparent;"
         )
+        self.stamp.setStyleSheet(meta_qss(t))
+        self.wave.set_color(t.record)
+        self.view.apply_theme(t)
 
-    # --- Thread-safe entry points ---------------------------------------
+    # --- Points d'entrée thread-safe ------------------------------------
     def on_summary(self, text: str, at: datetime):
         self._summary_signal.emit(text, at)
 
@@ -66,31 +95,29 @@ class LiveSummaryWindow(QWidget):
 
     # --- Slots ----------------------------------------------------------
     def _begin_summary(self, at: datetime):
-        if self.text_edit.toPlainText() == "En attente du premier résumé…":
-            self.text_edit.clear()
-        self.text_edit.append(f"── {at.strftime('%H:%M')} ──")
+        self._markdown = ""
         self._streaming = True
-        self._scroll_to_end()
+        self.stamp.setText(at.strftime("%H:%M"))
+        self.wave.set_active(True)
+        self.view.set_markdown("")
 
     def _append_chunk(self, chunk: str):
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(chunk)
-        self.text_edit.setTextCursor(cursor)
-        self.text_edit.ensureCursorVisible()
+        self._markdown += chunk
+        self.view.set_markdown(self._markdown)
+        self._scroll_to_end()
 
     def _finalize_summary(self, text: str, at: datetime):
-        # If we never streamed, render the full block now (legacy path).
+        # Sans streaming, le texte complet arrive d'un coup.
         if not self._streaming:
-            if self.text_edit.toPlainText() == "En attente du premier résumé…":
-                self.text_edit.clear()
-            self.text_edit.append(f"── {at.strftime('%H:%M')} ──")
-            self.text_edit.append(text)
-        self.text_edit.append("")
+            self._markdown = text
+        else:
+            self._markdown += text
         self._streaming = False
+        self.stamp.setText(at.strftime("%H:%M"))
+        self.wave.set_active(False)
+        self.view.set_markdown(self._markdown or f"_{_PLACEHOLDER}_")
         self._scroll_to_end()
 
     def _scroll_to_end(self):
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self.text_edit.setTextCursor(cursor)
+        bar = self.view.verticalScrollBar()
+        bar.setValue(bar.maximum())

@@ -58,3 +58,27 @@ def test_status_pill_switches(qapp):
     assert pill.status_label.text() == "En écoute"
     pill.set_speaking(False)
     assert pill.status_label.text() == "En attente"
+
+
+def test_status_pill_affiche_la_reunion_quand_un_titre_est_fourni(qapp):
+    """L'onde dit déjà l'état ; la pastille sert à savoir où l'on est."""
+    from benji.ui.widgets.status_pill import StatusPill
+
+    pill = StatusPill(datetime.now(), title_provider=lambda: "Point produit")
+    assert pill.status_label.text() == "Point produit"
+
+    pill.set_speaking(True)
+    assert pill.status_label.text() == "Point produit"
+
+    # La pause n'est pas déductible de l'onde : elle reprend la main.
+    pill.set_paused(True)
+    assert pill.status_label.text() == "Micro en pause"
+    pill.set_paused(False)
+    assert pill.status_label.text() == "Point produit"
+
+
+def test_status_pill_sans_reunion(qapp):
+    from benji.ui.widgets.status_pill import StatusPill
+
+    pill = StatusPill(datetime.now(), title_provider=lambda: "")
+    assert pill.status_label.text() == "Aucune réunion en cours"

@@ -107,6 +107,9 @@ class LiveTab(QWidget):
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(0)
+        # Le ressort est en HAUT : le transcript se tasse vers le bas, si bien que
+        # la ligne en cours suit toujours la dernière phrase dite au lieu de
+        # flotter à des centaines de pixels sous un début de réunion.
         self.content_layout.addStretch(1)
         outer.addWidget(self.content, 8)
         outer.addStretch(1)
@@ -139,7 +142,7 @@ class LiveTab(QWidget):
         self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.viewport_widget.setStyleSheet("background: transparent;")
         self.content.setStyleSheet("background: transparent;")
-        for i in range(self.content_layout.count() - 1):
+        for i in range(self.content_layout.count()):
             w = self.content_layout.itemAt(i).widget()
             if w is not None and hasattr(w, "apply_theme"):
                 w.apply_theme()
@@ -202,7 +205,7 @@ class LiveTab(QWidget):
 
         item = ChatItem(text, ts=now, speaker=speaker,
                         show_header=new_group, show_ts=show_ts, seq=seq)
-        self.content_layout.insertWidget(self.content_layout.count() - 1, item)
+        self.content_layout.addWidget(item)
         self._last_speaker = speaker
         self._last_time = now
 
@@ -222,16 +225,18 @@ class LiveTab(QWidget):
     def _trim_items(self) -> None:
         """Retire les lignes les plus anciennes au-delà de `_MAX_ITEMS`.
 
-        Le layout se termine par un stretch : les widgets occupent les index
-        0..count()-2, le plus ancien est donc à l'index 0.
+        Le ressort occupe l'index 0 : le plus ancien widget est juste après.
         """
         while self.content_layout.count() - 1 > _MAX_ITEMS:
-            layout_item = self.content_layout.takeAt(0)
-            if layout_item is None:
-                return
-            widget = layout_item.widget()
+            widget = None
+            for i in range(self.content_layout.count()):
+                candidate = self.content_layout.itemAt(i)
+                if candidate is not None and candidate.widget() is not None:
+                    widget = candidate.widget()
+                    self.content_layout.takeAt(i)
+                    break
             if widget is None:
-                continue
+                return
             # Une ligne retirée ne peut plus recevoir de correction : couper la
             # référence avant `deleteLater`, sinon `_apply_correction` toucherait
             # un objet C++ déjà détruit.

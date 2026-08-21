@@ -25,10 +25,12 @@ from PyQt6.QtWidgets import (
 from benji.ui.account_controller import AccountController
 from benji.ui.live_tab import LiveTab
 from benji.ui.style import (
-    FONT_UI,
     apply_window_vibrancy,
     current_theme,
     install_theme_listener,
+    panel_background_qss,
+    primary_button_qss,
+    secondary_button_qss,
 )
 from benji.ui.summaries_tab import SummariesTab
 from benji.ui.widgets.icons import (
@@ -114,7 +116,7 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        self.status_pill = StatusPill(self._session_start)
+        self.status_pill = StatusPill(self._session_start, title_provider=self._meeting_title)
         tb.addWidget(self.status_pill)
 
         spacer = QWidget()
@@ -161,12 +163,12 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(0, 8, 0, 0)
         v.setSpacing(8)
 
+        # Onglets alignés à gauche, dans la marge du document : ils désignent une
+        # vue sur la même matière, ils n'ont pas à trôner au centre.
         seg_wrap = QHBoxLayout()
-        seg_wrap.addStretch(1)
+        seg_wrap.setContentsMargins(20, 0, 20, 0)
         self.segmented = SegmentedControl(["Live", "Résumés"])
-        self.segmented.setFixedWidth(260)
         seg_wrap.addWidget(self.segmented)
-        seg_wrap.addStretch(1)
         v.addLayout(seg_wrap)
 
         self.stack = QStackedWidget()
@@ -189,26 +191,16 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self) -> None:
         t = current_theme()
-        bg = t.window_background
-        delta = 6 if t.is_dark else 5
-        top = bg.lighter(100 + delta)
-        bottom = bg.darker(100 + delta)
         # Vibrancy active : fond transparent pour laisser passer le flou natif.
-        # Sinon : dégradé plat (fallback sûr, toutes versions de Qt).
+        # Sinon : un aplat de papier — pas de dégradé, il salirait la couleur sous
+        # la ligne de temps.
         if self._vibrancy_active:
             window_bg = "QMainWindow { background: transparent; }"
         else:
-            window_bg = f"""
-            QMainWindow {{
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgb({top.red()},{top.green()},{top.blue()}),
-                    stop:1 rgb({bottom.red()},{bottom.green()},{bottom.blue()})
-                );
-            }}"""
+            window_bg = panel_background_qss(t, "QMainWindow")
         self.setStyleSheet(f"""
             {window_bg}
-            QToolBar {{ background: transparent; border: none; padding: 8px 12px; spacing: 8px; }}
+            QToolBar {{ background: transparent; border: none; padding: 10px 14px; spacing: 6px; }}
         """)
         self.status_pill.apply_theme()
         self.segmented.apply_theme()
@@ -220,63 +212,35 @@ class MainWindow(QMainWindow):
 
     def _apply_toolbar_button_styles(self) -> None:
         t = current_theme()
-        accent = t.accent
-        on_accent = "#ffffff"
-        hover = t.label_alpha(8)
-        label = t.label
-        self.summarize_btn.setIcon(doc_text_icon(on_accent))
-        self.summarize_btn.setStyleSheet(f"""
-            QPushButton#summarize_btn {{
-                font-family: {FONT_UI};
-                font-size: 12px;
-                font-weight: 500;
-                color: {on_accent};
-                background-color: rgb({accent.red()},{accent.green()},{accent.blue()});
-                border: none;
-                padding: 6px 14px;
-                border-radius: 6px;
-            }}
-            QPushButton#summarize_btn:hover {{
-                background-color: rgba({accent.red()},{accent.green()},{accent.blue()},220);
-            }}
-            QPushButton#summarize_btn:disabled {{
-                background-color: rgba({accent.red()},{accent.green()},{accent.blue()},90);
-                color: rgba(255,255,255,160);
-            }}
-        """)
-        self.minimize_btn.setIcon(minimize_icon(f"#{label.red():02x}{label.green():02x}{label.blue():02x}"))
-        self.minimize_btn.setStyleSheet(f"""
-            QPushButton#minimize_btn {{
-                font-family: {FONT_UI};
-                font-size: 12px;
-                font-weight: 500;
-                color: rgba({label.red()},{label.green()},{label.blue()},{label.alpha()});
-                background: transparent;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 6px;
-            }}
-            QPushButton#minimize_btn:hover {{
-                background-color: rgba({hover.red()},{hover.green()},{hover.blue()},{hover.alpha()});
-            }}
-        """)
+        ink_hex = f"#{t.ink.red():02x}{t.ink.green():02x}{t.ink.blue():02x}"
+        on_ink = "#ffffff" if not t.is_dark else f"#{t.paper.red():02x}{t.paper.green():02x}{t.paper.blue():02x}"
 
-        # Boutons icône seule (compte, réglages) : ghost, teinte label.
-        label_hex = f"#{label.red():02x}{label.green():02x}{label.blue():02x}"
+        # Action principale : aplat d'encre (le rouge est réservé au direct).
+        self.summarize_btn.setIcon(doc_text_icon(on_ink))
+        self.summarize_btn.setStyleSheet(
+            primary_button_qss(t).replace("QPushButton", "QPushButton#summarize_btn")
+        )
+        self.minimize_btn.setIcon(minimize_icon(ink_hex))
+        self.minimize_btn.setStyleSheet(
+            secondary_button_qss(t).replace("QPushButton", "QPushButton#minimize_btn")
+        )
+
+        # Boutons icône seule (compte, réglages, pause) : fantômes.
+        hover = t.ink_alpha(7)
         icon_qss = f"""
             QPushButton#icon_btn {{
                 background: transparent;
                 border: none;
-                padding: 6px;
-                border-radius: 6px;
+                padding: 7px;
+                border-radius: 7px;
             }}
             QPushButton#icon_btn:hover {{
                 background-color: rgba({hover.red()},{hover.green()},{hover.blue()},{hover.alpha()});
             }}
         """
-        self.account_btn.setIcon(person_icon(label_hex))
+        self.account_btn.setIcon(person_icon(ink_hex))
         self.account_btn.setStyleSheet(icon_qss)
-        self.settings_btn.setIcon(sliders_icon(label_hex))
+        self.settings_btn.setIcon(sliders_icon(ink_hex))
         self.settings_btn.setStyleSheet(icon_qss)
         self.pause_btn.setStyleSheet(icon_qss)
         self._refresh_pause_icon()
@@ -317,6 +281,16 @@ class MainWindow(QMainWindow):
     def _maybe_refresh_summarize_enabled(self, item) -> None:
         if isinstance(item, dict) and item.get("type") == "final_text" and item.get("text"):
             self._refresh_summarize_enabled()
+
+    def _meeting_title(self) -> str:
+        """Titre de la réunion en cours, vide tant qu'aucune phrase n'a été dite."""
+        from benji import meetings
+
+        meeting_id = meetings.current_meeting_id()
+        if meeting_id is None:
+            return ""
+        meeting = meetings.store().get(meeting_id)
+        return meeting.title if meeting else ""
 
     def _current_entries(self) -> list:
         """Entrées de la réunion en cours (vide tant qu'aucune n'a été dite)."""

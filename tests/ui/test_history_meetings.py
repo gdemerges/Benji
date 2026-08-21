@@ -16,9 +16,14 @@ def window(qtbot):
     return w
 
 
+def _shown(window) -> str:
+    return window.transcript.plain_text()
+
+
 def test_sans_reunion_l_ecran_est_vide(window):
-    assert window.meeting_combo.count() == 0
-    assert "Aucune transcription" in window.text_edit.toPlainText()
+    assert window.meeting_list.count() == 0
+    assert _shown(window) == ""
+    assert window.transcript.empty.isVisible() or not window.transcript.scroll.isVisible()
     assert not window.copy_btn.isEnabled()
 
 
@@ -26,9 +31,9 @@ def test_la_reunion_en_cours_est_selectionnee(window):
     window.history.add("Bonjour.", speaker="A")
     window.reload_meetings()
 
-    assert window.meeting_combo.count() == 1
+    assert window.meeting_list.count() == 1
     assert window._meeting_id == meetings.current_meeting_id()
-    assert "Bonjour." in window.text_edit.toPlainText()
+    assert "Bonjour." in _shown(window)
 
 
 def test_chaque_reunion_montre_ses_propres_entrees(window):
@@ -38,12 +43,12 @@ def test_chaque_reunion_montre_ses_propres_entrees(window):
     window.history.add("Dans la seconde.")
     window.reload_meetings()
 
-    assert "Dans la seconde." in window.text_edit.toPlainText()
-    assert "Dans la première." not in window.text_edit.toPlainText()
+    assert "Dans la seconde." in _shown(window)
+    assert "Dans la première." not in _shown(window)
 
-    window.meeting_combo.setCurrentIndex(window.meeting_combo.findData(first))
-    assert "Dans la première." in window.text_edit.toPlainText()
-    assert "Dans la seconde." not in window.text_edit.toPlainText()
+    window.meeting_list.setCurrentRow(window._row_for(first))
+    assert "Dans la première." in _shown(window)
+    assert "Dans la seconde." not in _shown(window)
 
 
 def test_changer_de_reunion_oublie_les_noms_de_locuteurs(window):
@@ -55,7 +60,7 @@ def test_changer_de_reunion_oublie_les_noms_de_locuteurs(window):
     window._speaker_names = {"A": "Alice"}
 
     # « A » n'est pas la même personne d'une réunion à l'autre.
-    window.meeting_combo.setCurrentIndex(window.meeting_combo.findData(first))
+    window.meeting_list.setCurrentRow(window._row_for(first))
     assert window._speaker_names == {}
 
 
@@ -67,10 +72,10 @@ def test_les_entrees_heritees_restent_lisibles(window):
     window.history.add("Nouvelle.")
     window.reload_meetings()
 
-    index = window.meeting_combo.findData(meetings.LEGACY_ID)
-    assert index >= 0
-    window.meeting_combo.setCurrentIndex(index)
-    assert "Ancienne réunion." in window.text_edit.toPlainText()
+    row = window._row_for(meetings.LEGACY_ID)
+    assert row >= 0
+    window.meeting_list.setCurrentRow(row)
+    assert "Ancienne réunion." in _shown(window)
     # Groupe hérité : pas de titre à renommer.
     assert not window.rename_meeting_btn.isEnabled()
 
@@ -84,7 +89,7 @@ def test_nouvelle_reunion_depuis_la_fenetre(window):
 
     assert meetings.current_meeting_id() != first
     assert window._meeting_id == meetings.current_meeting_id()
-    assert window.meeting_combo.count() == 2
+    assert window.meeting_list.count() == 2
 
 
 def test_effacer_ne_touche_que_la_reunion_affichee(window, monkeypatch):

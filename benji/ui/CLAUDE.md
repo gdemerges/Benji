@@ -1,16 +1,41 @@
 # benji/ui/
 
-- `overlay.py` — fenêtre sous-titres always-on-top, click-through sur macOS via `NSWindow` level. Consomme les events via le signal `DisplayBus.event` (le `DisplayBus` draine `display_queue` avec un `QTimer` central) — ne doit jamais bloquer la boucle Qt. Sticky-across-Spaces réasserté sur `NSWorkspaceActiveSpaceDidChangeNotification` (+ timer de secours 2 s). Multi-écrans : suit l'écran sous le curseur (`UIConfig.follow_active_screen`), réévalué à chaque `segment_start`.
-- `main_window.py` — fenêtre principale (toolbar + 2 onglets Live/Résumés), style macOS natif (vibrancy + palette adaptive). Bouton pause micro dans la toolbar (`on_toggle_pause`), état reflété par le `StatusPill` (« Micro en pause »).
-- `live_tab.py` — onglet Live : transcript **style document** (pas de cartes) : regroupement par prise de parole (en-tête ● Nom une fois par groupe, timestamp en gouttière au changement de minute), état vide « Benji écoute » (l'onde réagit au VAD), ligne partielle en bas. Une correction LLM (`corrected` + `seq`) **remplace** la ligne d'origine (fenêtre bornée `_MAX_CORRECTABLE`), jamais de doublon. Les lignes affichées sont plafonnées à `_MAX_ITEMS` (les plus anciennes sont détruites — elles restent dans l'historique disque) : sans ça une réunion longue laisse un QWidget par phrase en vie. Largeur de lecture 720px.
-- `summaries_tab.py` — onglet Résumés : liste groupée par jour + preview markdown stylée.
-- `tray.py` — icône menu bar macOS (Suspendre/Reprendre le micro / Quit / History / **Nouvelle réunion** / Live Summary ; **Signaler un problème…** → `mailto:` prérempli via `benji.report` + révélation du log ; **Révéler les logs** → `open -R` ; + section compte pilotée par `benji.account.Session` : Se connecter… / Passer Pro… / Gérer l'abonnement… / Se déconnecter, reconstruite à chaque ouverture via `aboutToShow`). Les entrées diagnostic vivent dans le **tronc commun** (avant la section compte) : `_rebuild` efface tout ce qui suit `trunk`.
-- `login_dialog.py` — dialogue modal de connexion/inscription (email + mot de passe) câblé à `Session`
-- `history_window.py` — **une réunion à la fois** : sélecteur (`meeting_combo`, réunion en cours présélectionnée, groupe « Sessions précédentes » pour les entrées héritées), Renommer…, Nouvelle réunion. Copier / Exporter / Résumer / Effacer portent sur la réunion affichée — l'effacement demande confirmation et ne touche jamais tout l'historique. Log scrollable + stats de session. **Copier** (txt → presse-papiers), **Exporter…** (menu txt/md/srt → `QFileDialog`, via `benji.export` ; nom de fichier dérivé du titre de la réunion) et **Locuteurs…** (renommage des labels de diarisation, remis à zéro en changeant de réunion — « A » n'est pas la même personne d'une réunion à l'autre). Restylé via les helpers de `style.py` (fond dégradé, panneau texte carte, boutons primaire/secondaire), thème rechargé au changement système.
-- `live_summary_window.py` — résumé LLM glissant, restylé via les helpers de `style.py` (fond adaptive + panneau texte).
-- `style.py` — palette adaptive light/dark, helpers QSS, vibrancy macOS (`NSVisualEffectView`). Source de vérité pour les couleurs / fonts. Helpers partagés : `panel_background_qss`, `text_panel_qss`, `primary_button_qss`, `secondary_button_qss` (scoper le fond via un `objectName` pour éviter la cascade sur les enfants).
-- `widgets/` — widgets custom : `StatusPill`, `SegmentedControl`, `ChatItem`, `PartialBubble`, `SummaryItem`, `PendingItem`, `icons` (SVG → QIcon), `waveform.py` (**élément signature** : mini forme d'onde 5 barres `WaveformDot`, animée quand la voix est détectée — utilisée dans le StatusPill, la ligne partielle, l'état vide du Live et l'overlay ; timer actif uniquement pendant l'animation).
+## Direction visuelle (2026-08-21)
 
-Raccourcis clavier (attachés à l'overlay) : Ctrl+Shift+H (history), Ctrl+Shift+S (summary), Ctrl+Shift+D (debug macOS).
+Benji est un **instrument sténographique**, pas une app système. Trois règles portent tout le reste — les enfreindre, c'est refaire une boîte de dialogue macOS générique.
 
-Le style se recharge automatiquement au changement de thème système (signal `QGuiApplication.styleHints().colorSchemeChanged`). Chaque widget custom expose une méthode `apply_theme()` que `MainWindow._apply_theme` propage.
+1. **Une seule couleur saturée : le rouge d'enregistrement** (`theme.record`). Il ne signifie qu'une chose, « on prend au mot, maintenant » : le point du direct, la forme d'onde active, le micro coupé. Jamais une action — un bouton principal rouge se lit comme un danger. L'action principale est un **aplat d'encre** (`primary_button_qss`), la destructive est un texte rouge sans aplat (`destructive_button_qss`).
+2. **Trois voix typographiques.** L'interface parle en **SF Pro** (`FONT_UI`), les paroles transcrites sont composées en **New York**, le serif système (`FONT_READING` / `reading_font()` pour les documents markdown, que `setMarkdown` compose sans lire le CSS), le temps est en **SF Mono** tabulaire (`FONT_MONO`). Distinguer d'un coup d'œil ce qui a été *dit* de ce que l'app *dit* fait la moitié de la lisibilité.
+3. **Aucune couleur en dur hors de `style.py`**, et rien n'est dérivé de la couleur d'accentuation du système : c'est précisément ce qui faisait ressembler Benji aux Réglages Système.
+
+**L'élément signature** est la **ligne de temps** : un filet vertical continu le long du transcript, avec un tick à chaque changement de minute et une **tige colorée** courant sur toute la durée d'une prise de parole. Elle porte de l'information vraie (quand, qui, combien de temps) — on voit qui a monopolisé une réunion en parcourant la marge. Chaque `ChatItem` peint son propre segment : mis bout à bout, ils ne laissent aucun trou. Le « maintenant » est le point rouge de `PartialBubble`, au bout de la même ligne.
+
+Les couleurs de locuteur sont une **famille sourde de cinq teintes**, pas un arc-en-ciel : ce sont des tiges de 2 px, elles ne doivent jamais rivaliser avec le rouge du direct. `speaker_color(label, on_dark=True)` force la variante claire pour l'overlay, toujours posé sur du noir.
+
+## Modules
+
+- `style.py` — **source de vérité**. Tokens (`paper`, `card`, `ink`, `ink_muted`, `ink_faint`, `ink_ghost`, `spine`, `record` + alias hérités), helpers QSS (`panel_background_qss`, `card_qss`, `reading_qss`, `meta_qss`, `field_qss`, `primary/secondary/destructive_button_qss`), fontes, vibrancy macOS (`NSVisualEffectView`, opt-in `BENJI_VIBRANCY`). `current_theme()` ne dépend plus d'un `QApplication`.
+- `overlay.py` — sous-titres always-on-top, click-through macOS via `NSWindow` level. Consomme `DisplayBus.event` — ne doit jamais bloquer la boucle Qt. Sticky-across-Spaces réasserté sur `NSWorkspaceActiveSpaceDidChangeNotification` (+ timer 2 s). Multi-écrans : suit l'écran sous le curseur (`UIConfig.follow_active_screen`), réévalué à chaque `segment_start`. **Exception assumée à la règle typographique** : une incrustation vidéo se lit de loin sur un fond quelconque, elle reste en sans-serif gras.
+- `main_window.py` — toolbar + onglets Live/Résumés. La pastille de statut affiche le **nom de la réunion en cours** (l'onde dit déjà l'état) ; « Micro en pause » reprend la main, seul état non déductible de l'onde.
+- `live_tab.py` — transcript **ancré en bas** (le ressort est en tête du layout) : la ligne en cours colle à la dernière phrase au lieu de flotter au bas d'une fenêtre vide. Regroupement par prise de parole, correction LLM (`corrected` + `seq`) qui **remplace** la ligne (`_MAX_CORRECTABLE`), lignes affichées plafonnées (`_MAX_ITEMS`, les anciennes restent sur disque).
+- `history_window.py` — **liste de réunions à gauche, compte rendu à droite**, rendu par le même `TranscriptView` que le direct : relire une vieille réunion donne la page qu'on regardait pendant qu'elle se disait. Actions hiérarchisées (Copier / Exporter… / Locuteurs… secondaires, Effacer destructive et confirmée, Résumer principale). Renommer, Nouvelle réunion. Les entrées héritées apparaissent sous « Sessions précédentes ».
+- `live_summary_window.py` — **markdown rendu**, même feuille que l'onglet Résumés (on y lisait `**Décision**` en toutes lettres). En-tête : onde active pendant la rédaction + heure du résumé.
+- `summaries_tab.py` — liste groupée par jour + preview markdown, via `widgets/markdown_view.py`.
+- `tray.py` — menu barre de menus (pause micro, fenêtre, historique, **Nouvelle réunion**, résumé live, Signaler un problème… → `benji.report`, Révéler les logs, section compte reconstruite via `aboutToShow`). Les entrées diagnostic sont dans le tronc commun : `_rebuild` efface tout ce qui suit `trunk`.
+- `preferences_dialog.py` — sections encadrées, bouton d'enregistrement en aplat d'encre.
+- `login_dialog.py` — connexion/inscription câblée à `Session`.
+- `widgets/`
+  - `chat_item.py` — **une prise de parole sur la ligne de temps** (filet, tick de minute, tige de locuteur). `_SPINE_X` / `_TEXT_X` sont la grille partagée du transcript.
+  - `partial_bubble.py` — le « maintenant » : onde dans la gouttière (pour la ligne vivante, le temps *est* l'onde), point rouge sur la ligne, texte en gris.
+  - `transcript_view.py` — transcript figé composé comme le direct (mêmes `ChatItem`), utilisé par la fenêtre Réunions.
+  - `markdown_view.py` — rendu markdown partagé (CSS + fonte de document + marges de titre que `setMarkdown` ignore).
+  - `waveform.py` — **élément signature historique** : 5 barres animées quand la voix est détectée. Timer actif seulement pendant l'animation.
+  - `status_pill.py`, `segmented_control.py` (onglets **soulignés**, pas de pilule grise), `summary_item.py`, `pending_item.py`, `icons.py`.
+
+Raccourcis (attachés à l'overlay) : Ctrl+Shift+H (réunions), Ctrl+Shift+S (résumé), Ctrl+Shift+D (debug macOS).
+
+Le style se recharge au changement de thème système (`colorSchemeChanged`). Chaque widget custom expose `apply_theme()`, propagé par `MainWindow._apply_theme`.
+
+## Voir ce qu'on fait
+
+Les fenêtres se capturent hors écran, sans lancer l'app ni charger Whisper : `QT_QPA_PLATFORM=offscreen`, instancier la fenêtre avec des données factices, `widget.grab().save(path)`. Penser à forcer l'opacité des `QGraphicsOpacityEffect` (sinon les fondus d'apparition figent le texte à 30 %) et à monkeypatcher `style._is_dark` pour la variante sombre — la plateforme offscreen n'honore pas `setColorScheme`.
