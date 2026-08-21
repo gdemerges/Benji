@@ -1,14 +1,21 @@
-"""Moteur de transcription : Parakeet TDT sur Apple Silicon (MLX).
+"""Moteurs de transcription : Parakeet pour le direct, Whisper pour l'archive.
 
-Benji a longtemps porté deux moteurs Whisper (mlx-whisper et faster-whisper).
-Ils ont été retirés : sur le régime de l'app — des tampons de 1 à 8 s, re-décodés
-souvent — Whisper encode toujours une fenêtre **paddée de 30 s** quelle que soit
-la durée réelle du tampon, quand Parakeet ne paie que l'audio reçu. Mesuré sur
-M4 Pro : 58 ms contre ~680 ms sur un tampon de 1,2 s, à mémoire équivalente.
+Chaque passe a son moteur, parce qu'elles n'ont pas le même cahier des charges.
 
-Ce qui a disparu avec eux : `initial_prompt`, donc le glossaire et le contexte
-glissant — Parakeet n'accepte aucun conditionnement par le texte. Et le repli CPU
-faster-whisper, donc Benji est désormais Apple Silicon **exclusivement**.
+**Passes partielles → Parakeet TDT.** Le texte y est éphémère : il sera remplacé
+par le final. Ce qui compte est la latence, et Parakeet ne paie que l'audio reçu
+là où Whisper encode toujours une fenêtre paddée de 30 s — 58 ms contre ~680 ms
+sur un tampon de 1,2 s, mesuré sur M4 Pro.
+
+**Passe finale → Whisper, langue forcée.** Le texte y est définitif : il part
+dans l'historique, les exports et les résumés. Parakeet fait de la détection
+automatique sur 25 langues **sans aucun levier pour la forcer** (confirmé par la
+fiche NVIDIA), et bascule en anglais sur des segments difficiles — au milieu
+d'une réunion française, on obtient « the utility devient also the chef
+d'orchestre ». Whisper accepte `language="fr"` : la dérive devient impossible.
+
+Le repli CPU faster-whisper, lui, reste retiré : Benji est Apple Silicon
+exclusivement.
 """
 
 from __future__ import annotations
@@ -20,6 +27,15 @@ from typing import Protocol
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+
+_MLX_WHISPER_MODELS = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
 
 
 class STTBackend(Protocol):
@@ -117,5 +133,70 @@ class ParakeetBackend:
             yield from words_from_result(result)
 
 
+class WhisperBackend:
+    """Whisper via mlx-whisper, **langue figée à la construction**.
+
+    La langue ne varie pas d'un segment à l'autre au sein d'une session : la
+    fixer ici garde le protocole `transcribe(audio)` à un seul argument, commun
+    aux deux moteurs.
+
+    Ne sert que sur la passe finale, d'où la chaîne de repli en température : un
+    décodage glouton raté est retenté plus chaud, ce qu'on ne peut pas se
+    permettre sur une partielle mais qui vaut le coup sur du définitif.
+    """
+
+    name = "whisper"
+
+    def __init__(self, model_size: str = "medium", language: str | None = "fr"):
+        import mlx_whisper
+
+        self._mlx = mlx_whisper
+        self.repo = _MLX_WHISPER_MODELS.get(
+            model_size, f"mlx-community/whisper-{model_size}-mlx"
+        )
+        self.language = language
+        log.info("Chargement de Whisper '%s' (langue : %s)...", self.repo, language or "auto")
+
+    def transcribe(self, audio) -> Iterator[dict]:
+        if audio is None or len(audio) == 0:
+            return
+        result = self._mlx.transcribe(
+            audio,
+            path_or_hf_repo=self.repo,
+            language=self.language,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            logprob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            temperature=(0.0, 0.2, 0.4),
+            verbose=None,
+        )
+        for seg in result.get("segments", []):
+            for w in seg.get("words", []) or []:
+                text = (w.get("word") or "").strip()
+                if text:
+                    yield {"text": text, "start": w.get("start"), "end": w.get("end")}
+
+
 def build_backend(model_id: str = DEFAULT_MODEL) -> STTBackend:
+    """Moteur des passes partielles."""
     return ParakeetBackend(model_id)
+
+
+def build_final_backend(engine: str, model_size: str, language: str | None) -> STTBackend:
+    """Moteur de la passe finale — celui dont le texte est conservé.
+
+    `engine="parakeet"` renvoie None : l'appelant réutilise alors le moteur des
+    partielles, au prix de la garantie de langue.
+    """
+    if engine != "whisper":
+        return None
+    try:
+        return WhisperBackend(model_size, language)
+    except ImportError:
+        log.warning(
+            "mlx-whisper absent : la passe finale retombe sur Parakeet, dont la "
+            "langue n'est pas garantie."
+        )
+        return None

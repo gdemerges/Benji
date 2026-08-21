@@ -154,3 +154,51 @@ def test_les_poids_sont_materialises_a_la_construction(monkeypatch):
     ParakeetBackend("mlx-community/parakeet-tdt-0.6b-v3")
 
     assert evaluated == [(params,)], "les poids doivent être matérialisés au chargement"
+
+
+# --- routage des passes ---
+
+
+def test_le_moteur_final_fige_la_langue(monkeypatch):
+    """Whisper est là pour une seule raison : contraindre la langue.
+
+    Parakeet détecte parmi 25 langues sans aucun levier pour la forcer, et
+    bascule en anglais sur des segments difficiles. Le texte final part dans
+    l'historique et les exports : il ne peut pas dériver.
+    """
+    from benji.stt.backend import build_final_backend
+
+    seen = {}
+
+    class _FakeWhisper:
+        name = "whisper"
+
+        def __init__(self, model_size, language):
+            seen["model_size"] = model_size
+            seen["language"] = language
+
+    monkeypatch.setattr(backend_mod, "WhisperBackend", _FakeWhisper)
+
+    backend = build_final_backend("whisper", "medium", "fr")
+
+    assert backend.name == "whisper"
+    assert seen == {"model_size": "medium", "language": "fr"}
+
+
+def test_final_en_parakeet_ne_construit_pas_de_second_moteur():
+    """`final_engine="parakeet"` = réutiliser le moteur des partielles."""
+    from benji.stt.backend import build_final_backend
+
+    assert build_final_backend("parakeet", "medium", "fr") is None
+
+
+def test_mlx_whisper_absent_ne_bloque_pas_le_demarrage(monkeypatch):
+    """Sans Whisper, on transcrit quand même — sans garantie de langue."""
+    from benji.stt.backend import build_final_backend
+
+    def _boom(model_size, language):
+        raise ImportError("mlx-whisper not installed")
+
+    monkeypatch.setattr(backend_mod, "WhisperBackend", _boom)
+
+    assert build_final_backend("whisper", "medium", "fr") is None

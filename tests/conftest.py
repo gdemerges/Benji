@@ -18,6 +18,12 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    # Filet : la suite est hermétique et hors ligne. Un test qui oublie de
+    # simuler un moteur construirait un vrai backend et téléchargerait un modèle
+    # de plusieurs gigaoctets — vu une fois, la suite « figeait » sans rien dire.
+    # Hors ligne, l'appel échoue tout de suite et le test pointe le vrai oubli.
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
 
     from benji import meetings
 

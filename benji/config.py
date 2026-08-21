@@ -55,11 +55,21 @@ class STTConfig:
     # "parakeet" : Parakeet TDT sur le Mac (défaut). "remote" : transcription via
     # le backend Benji (cf. docs/api-contract.md ; coordonnées dans LLMConfig).
     stt_provider: str = "parakeet"
-    # Poids du moteur local. Un seul modèle, contrairement à Whisper : la taille
-    # ne se règle pas, il n'y a pas d'arbitrage vitesse/qualité à faire.
+    # Poids du moteur des **passes partielles** (le texte vivant, éphémère).
     model: str = "mlx-community/parakeet-tdt-0.6b-v3"
-    # Ne pilote plus la transcription — Parakeet détecte la langue — mais reste
-    # la langue du post-traitement (nombres, interjections) et de la correction LLM.
+    # Moteur de la **passe finale** — celle dont le texte part dans l'historique,
+    # les exports et les résumés.
+    #   "whisper"  — langue forcée (défaut). Parakeet fait de la détection auto
+    #                sur 25 langues sans aucun levier pour la contraindre, et
+    #                bascule en anglais sur des segments difficiles : au milieu
+    #                d'une réunion française on récupère « the utility devient
+    #                also the chef d'orchestre ». Whisper rend ça impossible.
+    #   "parakeet" — réutilise le moteur des partielles : ~5× plus rapide sur le
+    #                final, mais la langue n'est plus garantie.
+    final_engine: str = "whisper"
+    final_model_size: str = "medium"
+    # Langue imposée à la passe finale, et langue du post-traitement (nombres,
+    # interjections) et de la correction LLM. None = détection automatique.
     language: str | None = "fr"
     diarization: bool = True  # Enable speaker labeling
     # "pitch" (built-in F0 clustering, no extra deps) or "pyannote" (real embeddings,

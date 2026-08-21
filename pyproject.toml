@@ -18,9 +18,11 @@ dependencies = [
     "pyobjc-framework-Cocoa>=10.0 ; sys_platform == 'darwin'",
     "pywin32>=306 ; sys_platform == 'win32'",
     "mlx-lm~=0.26.3 ; sys_platform == 'darwin'",
-    # Moteur de transcription. Poids sous licence CC-BY-4.0 : l'attribution
-    # NVIDIA est due dans le produit distribué.
+    # Moteur des passes partielles. Poids sous licence CC-BY-4.0 :
+    # l'attribution NVIDIA est due dans le produit distribué.
     "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
+    # Moteur de la passe finale : seul des deux à savoir forcer la langue.
+    "mlx-whisper>=0.4.0 ; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]

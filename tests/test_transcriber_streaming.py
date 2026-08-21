@@ -46,6 +46,9 @@ def _audio(seconds: float) -> np.ndarray:
 def _make(monkeypatch, scripts, **cfg) -> tuple[Transcriber, FakeBackend]:
     backend = FakeBackend(scripts)
     monkeypatch.setattr(transcriber_mod, "build_backend", lambda *a, **kw: backend)
+    # Sans ça, le Transcriber construit un vrai moteur final et va télécharger
+    # Whisper. None = « réutilise le moteur des partielles ».
+    monkeypatch.setattr(transcriber_mod, "build_final_backend", lambda *a, **kw: None)
     cfg.setdefault("diarization", False)  # ces tests pilotent le tagger explicitement
     t = Transcriber(Queue(), Queue(), STTConfig(**cfg), stats=None, sample_rate=SR)
     return t, backend
@@ -279,6 +282,9 @@ def test_diarization_runs_while_the_final_pass_decodes(monkeypatch):
 
     backend = WaitingBackend([[("bonjour", 0.0, 0.5)]])
     monkeypatch.setattr(transcriber_mod, "build_backend", lambda *a, **kw: backend)
+    # Sans ça, le Transcriber construit un vrai moteur final et va télécharger
+    # Whisper. None = « réutilise le moteur des partielles ».
+    monkeypatch.setattr(transcriber_mod, "build_final_backend", lambda *a, **kw: None)
     t = Transcriber(Queue(), Queue(), STTConfig(diarization=False), stats=None, sample_rate=SR)
     t.tagger = SlowTagger()
     monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
@@ -328,3 +334,43 @@ def test_tagger_error_is_not_fatal(monkeypatch):
     t._run_segment(_audio(1.0), is_final=True)
 
     assert saved == [None]
+
+
+# --- routage des passes vers les deux moteurs ---
+
+
+def _two_engine_transcriber(monkeypatch, partial_words, final_words):
+    partial_backend = FakeBackend([partial_words, partial_words])
+    final_backend = FakeBackend([final_words])
+    final_backend.name = "final"
+    monkeypatch.setattr(transcriber_mod, "build_backend", lambda *a, **kw: partial_backend)
+    monkeypatch.setattr(transcriber_mod, "build_final_backend", lambda *a, **kw: final_backend)
+    t = Transcriber(Queue(), Queue(), STTConfig(diarization=False), stats=None, sample_rate=SR)
+    return t, partial_backend, final_backend
+
+
+def test_les_partielles_et_la_finale_ne_vont_pas_au_meme_moteur(monkeypatch):
+    """Vitesse là où le texte est jetable, garantie de langue là où il reste."""
+    t, partial_backend, final_backend = _two_engine_transcriber(
+        monkeypatch,
+        [("brouillon", 0.0, 0.5)],
+        [("définitif", 0.0, 0.5)],
+    )
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+
+    t._run_partial(_audio(1.0))
+    assert len(partial_backend.calls) == 1
+    assert final_backend.calls == []
+
+    t._run_segment(_audio(1.0), is_final=True)
+    assert len(partial_backend.calls) == 1  # la finale ne repasse pas par lui
+    assert len(final_backend.calls) == 1
+
+    final = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"][0]
+    assert final["text"] == "Définitif"
+
+
+def test_sans_moteur_final_le_moteur_des_partielles_prend_le_relais(monkeypatch):
+    t, backend = _make(monkeypatch, [[("bonjour", 0.0, 0.5)]])
+
+    assert t.final_backend is t.backend

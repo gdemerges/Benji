@@ -11,7 +11,7 @@ from benji.config import STTConfig
 log = logging.getLogger(__name__)
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
-from benji.stt.backend import build_backend
+from benji.stt.backend import build_backend, build_final_backend
 from benji.stt.diarization import build_tagger
 from benji.stt.postprocessing import is_hallucination, postprocess_text
 
@@ -68,8 +68,18 @@ class Transcriber:
             else None
         )
 
+        # Deux moteurs, un par type de passe (cf. benji/stt/backend.py) : le
+        # direct privilégie la latence, le final la garantie de langue.
         self.backend = build_backend(self.config.model)
-        log.info("Moteur de transcription prêt : %s", self.backend.name)
+        self.final_backend = build_final_backend(
+            self.config.final_engine,
+            self.config.final_model_size,
+            self.config.language,
+        ) or self.backend
+        log.info(
+            "Moteurs prêts — partielles : %s · finale : %s",
+            self.backend.name, self.final_backend.name,
+        )
 
     def warmup(self) -> None:
         """Décodage à blanc pour amortir la compilation des noyaux Metal.
@@ -78,15 +88,17 @@ class Transcriber:
         chargement (`mx.eval` des poids) : ce préchauffage-ci ne sert plus qu'à
         payer la compilation avant la première vraie phrase, pas après.
         """
-        try:
-            t0 = time.monotonic()
-            for _ in self.backend.transcribe(
-                np.zeros(self.sample_rate, dtype=np.float32)
-            ):
-                pass
-            log.info("Préchauffage en %.0f ms", (time.monotonic() - t0) * 1000)
-        except Exception as e:
-            log.warning("Préchauffage ignoré : %s", e)
+        silence = np.zeros(self.sample_rate, dtype=np.float32)
+        for backend in {id(self.backend): self.backend,
+                        id(self.final_backend): self.final_backend}.values():
+            try:
+                t0 = time.monotonic()
+                for _ in backend.transcribe(silence):
+                    pass
+                log.info("Préchauffage de %s en %.0f ms",
+                         backend.name, (time.monotonic() - t0) * 1000)
+            except Exception as e:
+                log.warning("Préchauffage de %s ignoré : %s", backend.name, e)
 
     def _reset_partial_state(self) -> None:
         self._committed_words = []
@@ -186,7 +198,7 @@ class Transcriber:
 
         self.display_queue.put({"type": "segment_start"})
         words: list[dict] = []
-        for word in self.backend.transcribe(audio):
+        for word in self.final_backend.transcribe(audio):
             words.append(word)
             self.display_queue.put({
                 "type": "word",
