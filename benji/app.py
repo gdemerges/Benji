@@ -275,7 +275,11 @@ class BenjiApplication:
             self.app.processEvents()
             return
 
-        # Locals captured by the loader thread (avoid touching self off-thread).
+        if self.loads_model_inline():
+            self._load_transcriber_inline(splash)
+            return
+
+        # Locals capturés par le thread de chargement (ne pas toucher self hors thread).
         transcribe_queue = self.transcribe_queue
         display_queue = self.display_queue
         stats = self.stats
@@ -314,6 +318,45 @@ class BenjiApplication:
             raise error["e"]
 
         self.transcriber = holder["t"]
+        self.history = self.transcriber.history
+
+        splash.set_status("Démarrage de la capture audio…")
+        self.app.processEvents()
+
+    def loads_model_inline(self) -> bool:
+        """Le modèle doit-il être chargé sur le thread principal ?
+
+        Vrai pour Parakeet uniquement : MLX le lie au thread qui le charge et le
+        préchauffe, et un thread de fond éphémère le casse définitivement
+        (cf. `_load_transcriber_inline`). Whisper, bien plus lent à charger,
+        garde le thread de fond pour ne pas figer l'UI.
+        """
+        return self.cfg.stt.stt_provider == "parakeet"
+
+    def _load_transcriber_inline(self, splash: SplashWindow) -> None:
+        """Charge le modèle sur le thread principal — obligatoire pour Parakeet.
+
+        MLX lie le modèle au **stream du thread qui l'a chargé et préchauffé**.
+        Chargé depuis un thread éphémère (le `_ModelLoader` ci-dessus), Parakeet
+        devient définitivement inutilisable dès que ce thread meurt : chaque
+        inférence lève « There is no Stream(gpu, N) in current thread », y compris
+        depuis le thread principal, et aucun `new_stream` ne le répare. Une fois
+        chargé *et* préchauffé ici, il s'utilise depuis n'importe quel thread —
+        c'est le préchauffage qui fixe la liaison, pas le chargement seul.
+
+        Le prix est un blocage de l'UI pendant le chargement. Mesuré à ~0,7 s pour
+        Parakeet depuis le cache disque : préférable à un moteur cassé. Whisper,
+        bien plus lent à charger, garde le thread de fond.
+        """
+        self.transcriber = Transcriber(
+            self.transcribe_queue, self.display_queue, self.cfg.stt,
+            stats=self.stats, sample_rate=self.cfg.audio.sample_rate,
+        )
+        splash.set_status("Préchauffage du modèle…")
+        self.app.processEvents()
+        # Préchauffage sur CE thread : c'est lui qui lie le modèle à un stream
+        # durable. Le déplacer ailleurs recasserait Parakeet.
+        self.transcriber.warmup()
         self.history = self.transcriber.history
 
         splash.set_status("Démarrage de la capture audio…")

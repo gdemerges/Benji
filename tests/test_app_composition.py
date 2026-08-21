@@ -213,3 +213,51 @@ def test_shutdown_is_idempotent_with_system_audio(monkeypatch):
     app.shutdown()
     app.shutdown()
     assert stopped == ["system", "system"]
+
+
+def test_parakeet_est_charge_et_prechauffe_sur_le_thread_principal(monkeypatch):
+    """MLX lie le modèle au thread qui le charge **et** le préchauffe.
+
+    Chargé depuis un thread éphémère, Parakeet devient définitivement
+    inutilisable dès que ce thread meurt — chaque inférence lève « There is no
+    Stream(gpu, N) in current thread », depuis n'importe quel thread, et aucun
+    `new_stream` ne le répare. Ce test échoue si le chargement repart en fond.
+    """
+    import threading
+
+    import benji.app as app_mod
+
+    seen = {}
+
+    class _FakeTranscriber:
+        def __init__(self, *args, **kwargs):
+            seen["construit"] = threading.current_thread()
+            self.history = object()
+
+        def warmup(self):
+            seen["prechauffe"] = threading.current_thread()
+
+    class _FakeSplash:
+        def set_status(self, _text):
+            pass
+
+    monkeypatch.setattr(app_mod, "Transcriber", _FakeTranscriber)
+
+    app = BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="parakeet")))
+    app.app = type("QApp", (), {"processEvents": lambda self: None})()
+    app.transcribe_queue = app.display_queue = None
+
+    app._load_transcriber(_FakeSplash())
+
+    main = threading.main_thread()
+    assert seen["construit"] is main, "Parakeet chargé hors du thread principal"
+    assert seen["prechauffe"] is main, "Parakeet préchauffé hors du thread principal"
+    assert app.transcriber is not None
+    assert app.history is app.transcriber.history
+
+
+def test_seul_parakeet_est_charge_sur_le_thread_principal():
+    """Whisper est bien plus lent à charger : il garde le thread de fond."""
+    assert BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="parakeet"))).loads_model_inline()
+    assert not BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="local"))).loads_model_inline()
+    assert not BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="remote"))).loads_model_inline()

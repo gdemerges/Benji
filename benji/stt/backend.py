@@ -233,6 +233,7 @@ class ParakeetBackend:
     name = "parakeet"
 
     def __init__(self, model_id: str = _PARAKEET_DEFAULT_REPO):
+        import mlx.core as mx
         from parakeet_mlx import from_pretrained  # noqa: F401 (échoue vite si absent)
 
         self.model_id = model_id
@@ -240,6 +241,17 @@ class ParakeetBackend:
         self.model = from_pretrained(model_id)
         self.preprocess = self.model.preprocessor_config
         self._warned_prompt = False
+
+        # Matérialise les poids **sur ce thread**. MLX charge paresseusement et
+        # lie les tableaux au stream du thread qui les évalue en premier ; sans
+        # cet appel, la liaison n'a lieu qu'au premier décodage réel, et toute
+        # inférence depuis un autre thread lève « There is no Stream(gpu, N) in
+        # current thread ». On ne peut pas s'en remettre à `warmup()` : il
+        # préchauffe sur du silence, dont Parakeet ne décode aucun token — le
+        # décodeur ne tourne donc jamais et rien n'est lié.
+        # Corollaire : ce constructeur doit être appelé depuis un thread qui vit
+        # aussi longtemps que l'app (cf. `BenjiApplication.loads_model_inline`).
+        mx.eval(self.model.parameters())
         log.info("Parakeet prêt (16 kHz natif, décodage glouton)")
 
     def transcribe(self, audio, language, beam_size=None, initial_prompt=None):

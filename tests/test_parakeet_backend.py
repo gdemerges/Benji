@@ -175,3 +175,37 @@ def test_le_moteur_par_defaut_est_une_dependance_dure():
 
     assert "parakeet-mlx" in deps
     assert "parakeet" not in pyproject["project"].get("optional-dependencies", {})
+
+
+# --- liaison au thread MLX ---
+
+
+def test_les_poids_sont_materialises_a_la_construction(monkeypatch):
+    """MLX lie les tableaux au stream du thread qui les évalue en premier.
+
+    Sans `mx.eval()` au chargement, la liaison n'a lieu qu'au premier décodage
+    réel : toute inférence lancée depuis le thread STT lève alors « There is no
+    Stream(gpu, N) in current thread ». On ne peut pas compter sur `warmup()`,
+    qui préchauffe sur du silence — Parakeet n'en décode aucun token, donc le
+    décodeur ne tourne jamais et rien n'est lié.
+    """
+    import mlx.core as mx
+    import parakeet_mlx
+
+    from benji.stt.backend import ParakeetBackend
+
+    params = {"encoder": "poids"}
+
+    class _FakeModel:
+        preprocessor_config = object()
+
+        def parameters(self):
+            return params
+
+    evaluated = []
+    monkeypatch.setattr(parakeet_mlx, "from_pretrained", lambda model_id: _FakeModel())
+    monkeypatch.setattr(mx, "eval", lambda *args: evaluated.append(args))
+
+    ParakeetBackend("mlx-community/parakeet-tdt-0.6b-v3")
+
+    assert evaluated == [(params,)], "les poids doivent être matérialisés au chargement"
