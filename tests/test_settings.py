@@ -36,14 +36,12 @@ def test_get_missing_returns_default(tmp_path):
 
 def test_hydrate_applies_saved_values(tmp_path):
     s = _settings(tmp_path)
-    s.set_value("model_size", "small")
     s.set_value("language", "en")
     s.set_value("bg_opacity", 200)
 
     stt, ui = STTConfig(), UIConfig()
     s.hydrate(stt=stt, ui=ui)
 
-    assert stt.model_size == "small"
     assert stt.language == "en"
     assert ui.bg_opacity == 200
 

@@ -38,13 +38,11 @@ def test_save_persists_and_applies_live(qapp, tmp_path):
     dlg = PreferencesDialog(stt, ui, settings, on_live_change=applied.append)
     dlg._font_size.setValue(40)
     dlg._opacity.setValue(120)
-    dlg._model.setCurrentText("small")
     dlg._save()
 
     # Config vivante mise à jour
     assert ui.font_size == 40
     assert ui.bg_opacity == 120
-    assert stt.model_size == "small"
 
     # Réglage live poussé via le callback
     assert applied and applied[0].font_size == 40
@@ -53,7 +51,6 @@ def test_save_persists_and_applies_live(qapp, tmp_path):
     stt2, ui2 = STTConfig(), UIConfig()
     settings.hydrate(stt=stt2, ui=ui2)
     assert ui2.font_size == 40
-    assert stt2.model_size == "small"
 
 
 def test_providers_hidden_without_llm_config(qapp, tmp_path):

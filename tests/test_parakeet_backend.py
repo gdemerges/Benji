@@ -8,8 +8,6 @@ testée sans charger le moindre modèle.
 
 from dataclasses import dataclass
 
-import pytest
-
 import benji.stt.backend as backend_mod
 from benji.stt.backend import build_backend, group_tokens_into_words, words_from_result
 
@@ -93,43 +91,10 @@ def test_resultat_sans_phrase():
     assert words_from_result(object()) == []
 
 
-# --- sélection du moteur ---
+# --- construction du backend ---
 
 
-def test_parakeet_absent_retombe_sur_whisper(monkeypatch):
-    """Un moteur indisponible ne doit jamais empêcher de transcrire."""
-    def _boom(model_id):
-        raise ImportError("parakeet-mlx not installed")
-
-    monkeypatch.setattr(backend_mod, "ParakeetBackend", _boom)
-    built = []
-
-    def _whisper(size, default_beam_size=5):
-        built.append(size)
-        return type("B", (), {"name": "mlx"})()
-
-    monkeypatch.setattr(backend_mod, "MLXWhisperBackend", _whisper)
-
-    backend = build_backend("medium", 5, 4, engine="parakeet")
-
-    assert backend.name == "mlx"
-    assert built == ["medium"]
-
-
-def test_moteur_whisper_par_defaut(monkeypatch):
-    monkeypatch.setattr(
-        backend_mod, "ParakeetBackend",
-        lambda model_id: pytest.fail("Parakeet ne doit pas être construit par défaut"),
-    )
-    monkeypatch.setattr(
-        backend_mod, "MLXWhisperBackend",
-        lambda size, default_beam_size=5: type("B", (), {"name": "mlx"})(),
-    )
-
-    assert build_backend("medium", 5, 4).name == "mlx"
-
-
-def test_le_moteur_choisi_recoit_ses_poids(monkeypatch):
+def test_build_backend_rend_parakeet(monkeypatch):
     seen = {}
 
     def _fake(model_id):
@@ -138,43 +103,23 @@ def test_le_moteur_choisi_recoit_ses_poids(monkeypatch):
 
     monkeypatch.setattr(backend_mod, "ParakeetBackend", _fake)
 
-    backend = build_backend("medium", 5, 4, engine="parakeet",
-                            parakeet_model="mlx-community/parakeet-tdt-0.6b-v3")
+    backend = build_backend()
 
     assert backend.name == "parakeet"
     assert seen["id"] == "mlx-community/parakeet-tdt-0.6b-v3"
 
 
-# --- le moteur par défaut ---
+def test_build_backend_accepte_dautres_poids(monkeypatch):
+    seen = {}
 
+    def _fake(model_id):
+        seen["id"] = model_id
+        return type("B", (), {"name": "parakeet"})()
 
-def test_parakeet_est_le_moteur_par_defaut():
-    """Le défaut doit être Parakeet : c'est le seul qui tienne le temps réel.
+    monkeypatch.setattr(backend_mod, "ParakeetBackend", _fake)
+    build_backend("mlx-community/parakeet-tdt-0.6b-v2")
 
-    Verrouillé ici parce qu'un retour discret à Whisper multiplierait par cinq la
-    latence de chaque passe sans que rien ne le signale.
-    """
-    from benji.config import STTConfig
-
-    assert STTConfig().stt_provider == "parakeet"
-
-
-def test_le_moteur_par_defaut_est_une_dependance_dure():
-    """Le moteur par défaut ne peut pas être un extra optionnel.
-
-    Sinon un `uv sync` nu retombe silencieusement sur Whisper, et l'app tourne
-    cinq fois plus lentement que prévu sans que personne le voie.
-    """
-    import tomllib
-    from pathlib import Path
-
-    pyproject = tomllib.loads(
-        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    deps = " ".join(pyproject["project"]["dependencies"])
-
-    assert "parakeet-mlx" in deps
-    assert "parakeet" not in pyproject["project"].get("optional-dependencies", {})
+    assert seen["id"] == "mlx-community/parakeet-tdt-0.6b-v2"
 
 
 # --- liaison au thread MLX ---

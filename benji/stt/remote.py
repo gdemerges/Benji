@@ -1,7 +1,7 @@
 """Client STT distant : streame le micro vers le backend Benji et relaie les
 events de transcription vers `display_queue` (cf. docs/api-contract.md §3).
 
-Bypasse VAD + Whisper local : en mode `STTConfig.stt_provider = "remote"`, le
+Bypasse VAD + moteur local : en mode `STTConfig.stt_provider = "remote"`, le
 backend fait la transcription (Deepgram). Le client ne fait que convertir
 l'audio en PCM 16-bit et router les events du contrat — qui parlent déjà le
 vocabulaire de `display_queue` (`vad_status`/`segment_start`/`word`/`final_text`).
@@ -52,6 +52,9 @@ class RemoteSTTClient:
         sample_rate: int = 16000,
         language: str | None = "fr",
         diarization: bool = True,
+        # Le contrat backend prévoit un glossaire (cf. docs/api-contract.md).
+        # Plus aucun moteur local ne sait s'en servir, donc rien ne l'alimente
+        # aujourd'hui : la clé reste dans la trame pour ne pas casser le contrat.
         glossary: list[str] | None = None,
         connect=None,  # () -> connexion WS (injectable pour tests)
     ):
@@ -243,5 +246,4 @@ def build_remote_stt_client(
         sample_rate=sample_rate,
         language=stt_cfg.language,
         diarization=stt_cfg.diarization,
-        glossary=stt_cfg.glossary,
     )

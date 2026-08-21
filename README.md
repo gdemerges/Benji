@@ -2,7 +2,7 @@
 
 **Your meetings never leave your Mac.**
 
-Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine — microphone *and* the other participants' audio. No account, no API key, no upload: the transcript exists only on your disk. Optimized for Apple Silicon via [MLX](https://github.com/ml-explore/mlx): [Parakeet TDT](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) by default, Whisper on demand, with a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) fallback elsewhere.
+Real-time speech-to-text subtitles that overlay on top of your screen, running entirely on your machine — microphone *and* the other participants' audio. No account, no API key, no upload: the transcript exists only on your disk. **Apple Silicon only**, via [MLX](https://github.com/ml-explore/mlx) and [Parakeet TDT](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3).
 
 Parakeet weights are licensed CC-BY-4.0 — credit: NVIDIA NeMo `parakeet-tdt-0.6b-v3`.
 
@@ -14,10 +14,10 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 
 - **Streaming word-by-word display** — words appear progressively as you speak, stabilized with LocalAgreement-2 (a word is shown as confirmed once two successive partial passes agree on it)
 - **Local transcription** — the model runs on-device; no API key, nothing leaves your machine
-- **Two local engines** — Parakeet TDT by default (roughly 5× faster on the short buffers Benji works with), or Whisper if you need the glossary, which Parakeet cannot use
+- **Built for short buffers** — Parakeet decodes only the audio it is given, where Whisper always pads to a 30 s window: ~58 ms per partial pass instead of ~680 ms, measured on an M4 Pro
 - **Meeting capture** — mixes your microphone with the system audio of a video call, so both sides of the conversation get transcribed (requires a loopback driver, see below)
-- **Apple Silicon GPU** via MLX-Whisper (fp16); automatic fallback to faster-whisper (CTranslate2, CUDA or CPU) on other setups
-- **French by default** (`STTConfig.language = "fr"`), switchable to any Whisper language or auto-detect
+- **Apple Silicon GPU** via MLX
+- **French by default** (`STTConfig.language = "fr"`) — drives post-processing and LLM correction; the model itself detects the language
 - **Voice Activity Detection** — Silero VAD (ONNX) with an adaptive threshold that lifts above the noise floor in noisy rooms
 - **Two launch modes**:
   - **Overlay** — always-on-top, click-through subtitle bar (CLI launch)
@@ -25,7 +25,7 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 - **Optional speaker diarization** — built-in pitch-based A/B labeling (no extra deps), or real embeddings via `pyannote`
 - **Optional LLM polish** — post-hoc grammar/punctuation correction via MLX-LM (Qwen2.5-1.5B-Instruct-4bit)
 - **Live rolling summary** — periodic LLM summary of the running transcript
-- **Glossary & AGC** — bias Whisper toward your proper nouns, and peak-normalize quiet microphones
+- **AGC** — peak-normalize quiet microphones before transcription
 - **History** — every final utterance is saved with a timestamp, tagged with the meeting it belongs to, to `~/Library/Application Support/Benji/history.jsonl` (migrated automatically from the old `~/.cache/benji` location)
 - **Private by construction** — no telemetry, no account required, no network call in the default configuration
 
@@ -35,18 +35,18 @@ Three inter-thread queues keep the Qt UI thread unblocked:
 
 ```
 Microphone   → AudioCapture   ─┐
-System audio → SystemCapture ─┴→ AudioMixer → audio_queue → VAD (Silero ONNX) → transcribe_queue → Transcriber (Whisper) → display_queue → DisplayBus → Overlay / Window
+System audio → SystemCapture ─┴→ AudioMixer → audio_queue → VAD (Silero ONNX) → transcribe_queue → Transcriber (Parakeet) → display_queue → DisplayBus → Overlay / Window
                sounddevice      mixer thread                 VAD thread                            STT thread (+ supervisor)              Qt main thread
 ```
 
 When system audio is disabled, the mixer is never created and `AudioCapture` writes straight to `audio_queue`. When it is enabled, the mixer is driven by the microphone clock: for each mic chunk it consumes the same number of system samples, padding with silence if the system stream falls behind. The output rate is therefore exactly the mic's, and the VAD keeps receiving its fixed 512-sample chunks.
 
-The STT thread runs under a supervisor that restarts it with exponential backoff if it ever dies. Whisper is loaded on a background thread behind a splash screen so the UI stays responsive at startup.
+The STT thread runs under a supervisor that restarts it with exponential backoff if it ever dies. The model is loaded on the **main thread** behind a splash screen (~1.4 s): MLX binds a model to the thread that first evaluates its weights, so loading it on a short-lived background thread leaves it permanently unusable.
 
 ## Requirements
 
 - Python 3.12
-- macOS on Apple Silicon (recommended — uses the GPU via MLX), or Windows 10/11 / Linux (faster-whisper on CPU, or CUDA if available)
+- macOS on Apple Silicon. Local transcription uses the GPU via MLX and has no CPU fallback — other platforms can only run the app against the (frozen) Benji cloud backend
 
 ## Installation
 
@@ -72,7 +72,7 @@ Optional extras:
 uv sync --extra diarization   # real speaker diarization via pyannote (pulls in PyTorch; needs HF_TOKEN on first run)
 ```
 
-Models are downloaded automatically on first run: the transcription model (Parakeet, ~1.2 GB — or a Whisper model, size auto-selected, if you switch engines) and the Silero VAD ONNX (~2 MB). The MLX-LM model for correction/summary is only fetched if you enable those features.
+Models are downloaded automatically on first run: Parakeet (~2.5 GB) and the Silero VAD ONNX (~2 MB). The MLX-LM model for correction/summary is only fetched if you enable those features.
 
 ## Usage
 
@@ -124,7 +124,7 @@ Benji auto-detects the loopback device; you can pin a specific one in the same p
 The Preferences panel tells you which of the three states you are in, and pausing
 the microphone also stops system capture — a paused mic never means "still recording".
 
-Everything stays on-device: the mixed audio goes straight to the local Whisper model.
+Everything stays on-device: the mixed audio goes straight to the local model.
 
 ## Configuration
 
@@ -132,13 +132,12 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `STTConfig.stt_provider` | `"parakeet"` | `"parakeet"` (default, fast, no glossary), `"local"` (Whisper), `"remote"` (Benji cloud) |
-| `STTConfig.model_size` | Auto-selected | Whisper model — see selection logic below |
+| `STTConfig.stt_provider` | `"parakeet"` | `"parakeet"` (on this Mac) or `"remote"` (Benji cloud) |
+| `STTConfig.model` | `parakeet-tdt-0.6b-v3` | Local model weights |
 | `STTConfig.language` | `"fr"` | Target language; set to `None` for auto-detect, or `"en"`, etc. |
 | `STTConfig.diarization` | `False` | Enable speaker labels (`diarization_backend`: `"pitch"` or `"pyannote"`) |
 | `STTConfig.llm_correction` | `False` | Grammar/punctuation polish via MLX-LM (Apple Silicon) |
 | `STTConfig.live_summary_interval_s` | `0` | Rolling summary every N seconds (`0` = disabled) |
-| `STTConfig.glossary` | `[]` | Proper nouns / domain terms biased into Whisper's prompt |
 | `AudioConfig.system_audio` | `False` | Capture system audio (meetings) and mix it with the mic |
 | `AudioConfig.system_audio_device` | `None` | Loopback device name substring; `None` = auto-detect |
 | `AudioConfig.system_audio_gain` | `1.0` | Gain applied to the system stream before mixing |
@@ -165,7 +164,7 @@ All sizes are available (`tiny`, `base`, `small`, `medium`, `large-v3`). Overrid
 
 1. **Audio capture** — `sounddevice` records 16 kHz mono into `audio_queue`; with meeting capture on, a second stream reads the loopback device and both are summed (with saturation, not normalization, so the adaptive VAD doesn't read level pumping as noise)
 2. **VAD** — Silero VAD (ONNX) classifies 32 ms chunks; speech is accumulated and flushed to `transcribe_queue` after ~600 ms of silence (or sooner for long utterances)
-3. **Transcription** — the active Whisper backend (MLX on Apple Silicon, else faster-whisper) decodes segments with word timestamps. Partial passes re-decode only the unconfirmed tail (bounded cost), and LocalAgreement-2 commits the prefix two passes agree on
+3. **Transcription** — Parakeet decodes segments with word timestamps. Every partial pass re-decodes the whole buffer (~123 ms for 8 s), and LocalAgreement-2 commits the prefix two successive passes agree on, so text already on screen never rewrites itself
 4. **Display** — confirmed words stream to the overlay/window via `display_queue`; the final pass replaces them with post-processed (and optionally LLM-corrected) text
 5. **History & summaries** — finals are appended to `~/Library/Application Support/Benji/history.jsonl`, each tagged with its meeting id; generated summaries land in `~/Library/Application Support/Benji/summaries/`. Meetings themselves (title, start, end) live in `meetings.json` next to them
 
@@ -177,7 +176,7 @@ uv run pytest          # test suite (QT_QPA_PLATFORM=offscreen for headless runs
 uv run ruff check .    # lint
 ```
 
-CI runs ruff and the test suite on macOS via GitHub Actions (`.github/workflows/ci.yml`). The suite mocks the Silero VAD and never loads a real Whisper model, so it stays fast and offline.
+CI runs ruff and the test suite on macOS via GitHub Actions (`.github/workflows/ci.yml`). The suite mocks the Silero VAD and never loads a real model, so it stays fast and offline.
 
 ## License
 
@@ -185,7 +184,6 @@ MIT
 
 ## Credits
 
-- [MLX](https://github.com/ml-explore/mlx) and [mlx-whisper](https://github.com/ml-explore/mlx-examples) by Apple
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) by Systran
+- [MLX](https://github.com/ml-explore/mlx) by Apple, and [parakeet-mlx](https://github.com/senstella/parakeet-mlx) by senstella
 - [Silero VAD](https://github.com/snakers4/silero-vad) by Silero Team
-- OpenAI Whisper model
+- [NVIDIA NeMo `parakeet-tdt-0.6b-v3`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (CC-BY-4.0)

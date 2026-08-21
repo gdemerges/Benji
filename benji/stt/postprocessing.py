@@ -1,9 +1,12 @@
-"""Post-processing utilities to enhance Whisper transcriptions."""
+"""Nettoyage appliqué au texte sorti du moteur, après la passe finale."""
 
 import re
 
-# Common Whisper hallucinations on silence / low-signal audio.
-# Matched as substrings against the lower-cased, dot-stripped output.
+# Rebuts classiques des modèles entraînés sur des corpus de sous-titres, émis
+# sur du silence ou un signal faible. C'était le mode d'échec de Whisper ; le
+# filtre reste en place pour Parakeet — il ne coûte qu'une recherche de
+# sous-chaîne, et le jour où un moteur recrache ce boilerplate, il est déjà là.
+# Comparé en minuscules, points de fin retirés.
 HALLUCINATION_PATTERNS = (
     "sous-titres réalisés par",
     "sous-titres fait par",
@@ -27,15 +30,15 @@ HALLUCINATION_PATTERNS = (
 
 
 def is_hallucination(text: str) -> bool:
-    """Return True if *text* looks like a known Whisper hallucination or
-    a degenerate repetition (same token >= 4 times in a row)."""
+    """Vrai si *text* ressemble à un rebut connu ou à une répétition dégénérée
+    (même token 4 fois de suite)."""
     if not text:
         return True
     normalized = text.lower().strip().rstrip(".!?")
     if any(pattern in normalized for pattern in HALLUCINATION_PATTERNS):
         return True
     # Repetition detector: any word repeated 4+ times in a row → hallucination.
-    # Whisper's classic failure mode on noise is to emit the same token in a loop.
+    # Sur du bruit, un modèle qui déraille boucle sur le même token.
     if re.search(r"\b(\w{2,})\b(?:\W+\1\b){3,}", normalized, flags=re.IGNORECASE):
         return True
     return False
@@ -45,7 +48,7 @@ def postprocess_text(text: str, language: str = None) -> str:
     """
     Enhance transcription with better punctuation and capitalization.
 
-    Whisper already does basic punctuation, but this improves:
+    Le moteur ponctue déjà ; on améliore :
     - Capitalization after periods
     - Removal of hesitations (uh, um, etc.)
     - Proper spacing around punctuation

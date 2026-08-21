@@ -39,7 +39,6 @@ class PrefSpec:
 PREFS: tuple[PrefSpec, ...] = (
     # --- Transcription (redémarrage requis) ---
     PrefSpec("language", "stt", "language", str, nullable=True, restart=True),
-    PrefSpec("model_size", "stt", "model_size", str, restart=True),
     PrefSpec("diarization", "stt", "diarization", bool, restart=True),
     PrefSpec("live_summary_interval_s", "stt", "live_summary_interval_s", int, restart=True),
     # --- Moteurs local/cloud (redémarrage requis) ---

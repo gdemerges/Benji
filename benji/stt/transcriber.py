@@ -1,7 +1,6 @@
 import logging
 import threading
 import time
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from queue import Full, Queue
 
@@ -33,17 +32,18 @@ class Transcriber:
         self.stats = stats
         self.sample_rate = sample_rate
 
-        # Sliding context: last N validated words injected as initial_prompt
-        self._context = deque(maxlen=self.config.context_words)
-
-        # Per-segment streaming state (LocalAgreement-2 over partials).
-        # We don't re-transcribe the whole buffer every time: we slice off the
-        # audio prefix whose words have been confirmed by two successive partials
-        # and inject the confirmed text as initial_prompt. This bounds partial
-        # cost to roughly the unconfirmed tail length.
+        # État de streaming par segment (LocalAgreement-2 sur les passes
+        # partielles). On re-décode le tampon **entier** à chaque passe et on
+        # fige le préfixe sur lequel deux passes successives sont d'accord.
+        #
+        # Une version antérieure ne décodait que la queue non confirmée, en
+        # réinjectant le préfixe figé via `initial_prompt` : c'était un
+        # contournement du coût de Whisper. Parakeet décode 8 s en ~150 ms et
+        # n'accepte aucun prompt ; décoder tout est donc à la fois plus simple et
+        # plus juste — le modèle voit l'énoncé complet au lieu d'une tranche
+        # amputée de son début.
         self._committed_words: list[dict] = []
-        self._committed_samples: int = 0
-        self._prev_tail_texts: list[str] = []
+        self._prev_words_norm: list[str] = []
 
         # Async LLM correction: raw finals are shown immediately, then corrected
         # off-thread (see _corrector_loop) so the STT loop never blocks on the LLM.
@@ -68,52 +68,37 @@ class Transcriber:
             else None
         )
 
-        engine = "parakeet" if self.config.stt_provider == "parakeet" else "whisper"
-        if engine == "parakeet" and self.config.glossary:
-            # Dit une fois, fort : sinon l'utilisateur croit son glossaire actif.
-            log.warning(
-                "Glossaire ignoré : le moteur Parakeet n'accepte pas de "
-                "conditionnement par le texte. Repasser sur Whisper pour l'utiliser."
-            )
-        self.backend = build_backend(
-            model_size=self.config.model_size,
-            beam_size=self.config.beam_size,
-            cpu_threads=self.config.cpu_threads,
-            compute_type=self.config.compute_type,
-            engine=engine,
-            parakeet_model=self.config.parakeet_model,
-        )
+        self.backend = build_backend(self.config.model)
         log.info("Moteur de transcription prêt : %s", self.backend.name)
 
-    def warmup(self, seconds: float = 1.0) -> None:
-        """Run a one-shot inference on silence to amortize JIT/graph compilation.
+    def warmup(self) -> None:
+        """Décodage à blanc pour amortir la compilation des noyaux Metal.
 
-        Without this, the first real utterance pays the compile cost and feels laggy.
+        La liaison du modèle au stream MLX, elle, est faite par le backend au
+        chargement (`mx.eval` des poids) : ce préchauffage-ci ne sert plus qu'à
+        payer la compilation avant la première vraie phrase, pas après.
         """
         try:
-            n = int(seconds * self.sample_rate)
-            silence = np.zeros(n, dtype=np.float32)
             t0 = time.monotonic()
             for _ in self.backend.transcribe(
-                silence, language=self.config.language, beam_size=1, initial_prompt=None
+                np.zeros(self.sample_rate, dtype=np.float32)
             ):
                 pass
-            log.info("Warm-up done in %.0f ms", (time.monotonic() - t0) * 1000)
+            log.info("Préchauffage en %.0f ms", (time.monotonic() - t0) * 1000)
         except Exception as e:
-            log.warning("Warm-up skipped: %s", e)
+            log.warning("Préchauffage ignoré : %s", e)
 
     def _reset_partial_state(self) -> None:
         self._committed_words = []
-        self._committed_samples = 0
-        self._prev_tail_texts = []
+        self._prev_words_norm = []
 
     @staticmethod
     def _norm(text: str) -> str:
         """Normalize a word for cross-partial agreement comparison.
 
-        Whisper sometimes flips capitalization or attaches/detaches punctuation
-        between passes; ignore those so the agreement check focuses on the
-        actual lexical content.
+        Le moteur change parfois une capitale ou recolle une ponctuation d'une
+        passe à l'autre ; on les ignore pour que l'accord porte sur le contenu
+        lexical et pas sur ces variations.
         """
         return text.strip().lower().strip(".,;:!?\"'«»()[]")
 
@@ -125,27 +110,8 @@ class Transcriber:
                 return i
         return n
 
-    def _initial_prompt(self, extra_committed: list[str] | None = None) -> str | None:
-        """Build initial_prompt = glossary + recent context + in-segment committed words.
-
-        Glossary biases Whisper toward correct spellings of proper nouns / domain
-        terms; sliding context smooths transitions between segments; the
-        per-segment committed prefix lets a sliced (delta) partial decode pick
-        up where the previous partial left off.
-        """
-        parts: list[str] = []
-        if self.config.glossary:
-            parts.append(", ".join(self.config.glossary) + ".")
-        if self._context:
-            parts.append(" ".join(self._context))
-        if extra_committed:
-            parts.append(" ".join(extra_committed))
-        if not parts:
-            return None
-        return " ".join(parts)
-
     def _apply_agc(self, audio: np.ndarray) -> np.ndarray:
-        """Peak-normalize quiet audio so Whisper sees a consistent level.
+        """Normalise en crête les tampons faibles pour présenter un niveau constant.
 
         Boost-only: only quiet segments are scaled up; loud segments pass through.
         Avoids amplifying near-silence (peak < 0.01) which would just amplify noise.
@@ -160,74 +126,45 @@ class Transcriber:
         return (audio * gain).astype(np.float32, copy=False)
 
     def _run_partial(self, audio: np.ndarray) -> None:
-        """Re-transcribe only the unconfirmed tail and stabilize via LocalAgreement-2.
+        """Re-décode le tampon entier et stabilise l'affichage par LocalAgreement-2.
 
-        Cost is bounded by the tail length, not the full segment, so a long
-        utterance no longer pays O(n²) in partials.
+        Le préfixe sur lequel deux passes successives tombent d'accord est
+        considéré comme acquis et ne bougera plus à l'écran ; la queue est
+        affichée telle quelle, au titre de « meilleure hypothèse du moment ».
+        C'est ce qui évite que le texte déjà lu se réécrive sous les yeux.
+
+        Le figeage est **monotone** : on n'annule jamais un mot déjà acquis, même
+        si une passe ultérieure change d'avis — reprendre un mot affiché est plus
+        déroutant que de laisser une petite erreur que la passe finale corrigera.
         """
         start_t = time.monotonic()
         audio = self._apply_agc(audio)
+        if len(audio) < int(0.3 * self.sample_rate):
+            return  # trop court pour valoir une passe
 
-        # Skip if the new tail is too short to be worth a decode pass.
-        min_tail_samples = int(0.3 * self.sample_rate)
-        if len(audio) - self._committed_samples < min_tail_samples:
+        words = list(self.backend.transcribe(audio))
+        if not words:
             return
 
-        slice_audio = audio[self._committed_samples:]
-        slice_offset_s = self._committed_samples / self.sample_rate
+        norm = [self._norm(w["text"]) for w in words]
+        agreed = self._common_prefix_len(norm, self._prev_words_norm)
+        if agreed > len(self._committed_words):
+            self._committed_words = words[:agreed]
+        self._prev_words_norm = norm
 
-        committed_texts = [w["text"] for w in self._committed_words]
-        prompt = self._initial_prompt(extra_committed=committed_texts)
-
-        new_words: list[dict] = []
-        for w in self.backend.transcribe(
-            slice_audio,
-            language=self.config.language,
-            beam_size=self.config.partial_beam_size,
-            initial_prompt=prompt,
-        ):
-            new_words.append(w)
-
-        # LocalAgreement-2: the prefix that matches the previous partial's
-        # unconfirmed tail is considered stable and gets committed.
-        new_texts_norm = [self._norm(w["text"]) for w in new_words]
-        agree_n = self._common_prefix_len(new_texts_norm, self._prev_tail_texts)
-
-        newly_committed = new_words[:agree_n]
-        for w in newly_committed:
-            shifted = dict(w)
-            if w.get("start") is not None:
-                shifted["start"] = w["start"] + slice_offset_s
-            if w.get("end") is not None:
-                shifted["end"] = w["end"] + slice_offset_s
-            self._committed_words.append(shifted)
-
-        # Advance the audio cut point past the last committed word so the next
-        # partial decodes a shorter slice. Only safe when end timestamps exist.
-        if newly_committed and newly_committed[-1].get("end") is not None:
-            advance = int(newly_committed[-1]["end"] * self.sample_rate)
-            self._committed_samples += max(0, advance)
-
-        self._prev_tail_texts = new_texts_norm[agree_n:]
-
-        # Redraw the full live snapshot: stable prefix + best-guess tail.
+        # Redessine l'instantané : préfixe acquis, puis meilleure hypothèse.
         self.display_queue.put({"type": "segment_start"})
-        for w in self._committed_words:
+        for w in self._committed_words + words[len(self._committed_words):]:
             self.display_queue.put({
                 "type": "word", "text": w["text"],
                 "start": w.get("start"), "end": w.get("end"),
             })
-        for w in new_words[agree_n:]:
-            shifted_start = (w["start"] + slice_offset_s) if w.get("start") is not None else None
-            shifted_end = (w["end"] + slice_offset_s) if w.get("end") is not None else None
-            self.display_queue.put({
-                "type": "word", "text": w["text"],
-                "start": shifted_start, "end": shifted_end,
-            })
 
-        if self.stats is not None and new_words:
+        if self.stats is not None:
             latency_ms = (time.monotonic() - start_t) * 1000
-            self.stats.record_segment(len(slice_audio) / self.sample_rate, latency_ms, is_final=False)
+            self.stats.record_segment(
+                len(audio) / self.sample_rate, latency_ms, is_final=False
+            )
 
     def _run_segment(self, audio: np.ndarray, is_final: bool):
         if not is_final:
@@ -240,7 +177,7 @@ class Transcriber:
         # Diarisation lancée AVANT le décodage : elle ne dépend que de l'audio.
         # Enchaînée après, son coût (embedding pyannote) s'ajoutait tel quel au
         # délai avant affichage du texte final ; en parallèle, il est absorbé par
-        # le décodage Whisper qui tourne de toute façon.
+        # le décodage qui tourne de toute façon.
         speaker_future = None
         if self.tagger is not None:
             speaker_future = self._ensure_diarizer_pool().submit(
@@ -249,12 +186,7 @@ class Transcriber:
 
         self.display_queue.put({"type": "segment_start"})
         words: list[dict] = []
-        for word in self.backend.transcribe(
-            audio,
-            language=self.config.language,
-            beam_size=self.config.beam_size,
-            initial_prompt=self._initial_prompt(),
-        ):
+        for word in self.backend.transcribe(audio):
             words.append(word)
             self.display_queue.put({
                 "type": "word",
@@ -299,10 +231,6 @@ class Transcriber:
             # rapports de bug — le contenu transcrit ne doit pas y fuiter.
             log.debug('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
             self.history.add(full_text, speaker=speaker)
-
-        # Update sliding context from the raw (pre-label) words
-        for w in words[-self.config.context_words:]:
-            self._context.append(w["text"])
 
         # Stats
         if self.stats is not None:

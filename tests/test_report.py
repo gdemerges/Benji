@@ -20,7 +20,7 @@ def test_body_carries_diagnostics():
     assert __version__ in body
     assert "Segments : 2" in body
     assert "transcribe_queue_full ×1" in body
-    assert "modèle" in body  # config du moteur
+    assert "parakeet" in body  # config du moteur
     assert "/tmp/benji.log" in body
 
 
@@ -39,7 +39,7 @@ def test_body_degrades_gracefully_without_stats_or_config():
 def test_body_leaks_no_user_content():
     # Le rapport part par mail : il ne doit contenir que des faits anonymes.
     # Un glossaire utilisateur (noms propres) ne doit pas fuiter non plus.
-    cfg = STTConfig(glossary=["Demergès", "ProjetConfidentiel"])
+    cfg = STTConfig()
     body = build_report_body(_snapshot(), cfg, log_path="/tmp/benji.log")
 
     assert "ProjetConfidentiel" not in body

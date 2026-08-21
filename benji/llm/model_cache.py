@@ -3,7 +3,7 @@
 Le correcteur et le résumeur utilisent le même modèle (Qwen2.5-1.5B-4bit) mais
 avaient chacun leur cache : activer correction *et* résumé en direct chargeait
 deux fois les mêmes poids, soit environ 1 Go de RAM gaspillé sur une machine où
-Whisper occupe déjà la place. Un seul cache, une seule copie.
+le moteur de transcription occupe déjà la place. Un seul cache, une seule copie.
 
 Le verrou est global et non par identifiant : deux chargements simultanés de
 modèles différents sont un cas qui n'existe pas ici, et sérialiser évite deux

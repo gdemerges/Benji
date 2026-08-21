@@ -107,7 +107,7 @@ class _Ring:
 def _resample_linear(data: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Ré-échantillonnage linéaire mono.
 
-    Suffisant ici : la cible est un VAD et Whisper à 16 kHz, pas de l'écoute.
+    Suffisant ici : la cible est un VAD et un modèle STT à 16 kHz, pas de l'écoute.
     Éviter scipy garde la dépendance hors du chemin critique.
     """
     if src_rate == dst_rate or len(data) == 0:

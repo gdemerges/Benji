@@ -1,10 +1,9 @@
-"""Tests for the incremental streaming logic in Transcriber (LocalAgreement-2).
+"""Streaming incrémental du Transcriber (LocalAgreement-2).
 
-The transcriber decodes only the *unconfirmed tail* of a growing audio buffer
-and commits the prefix that two successive partial passes agree on. These tests
-drive that state machine with a scripted fake backend — no Whisper model, no
-audio decoding — so the agreement / slicing / timestamp-shifting logic is
-exercised in isolation.
+À chaque passe partielle le tampon est re-décodé **en entier**, et le préfixe sur
+lequel deux passes successives s'accordent est figé : il ne bougera plus à
+l'écran. Ces tests pilotent cette machine à états avec un faux backend scripté —
+aucun modèle chargé, aucun audio décodé.
 """
 
 from queue import Queue
@@ -20,13 +19,11 @@ SR = 16000
 
 
 class FakeBackend:
-    """Yields a scripted word list per transcribe() call.
+    """Rend une liste de mots scriptée à chaque appel de transcribe().
 
-    Each scripted word is ``(text, start, end)`` with start/end in seconds
-    relative to the *slice* it is handed. The audio argument is ignored: these
-    tests exercise the agreement bookkeeping, not real decoding. The length of
-    each audio slice is recorded in ``calls`` so tests can assert that the cut
-    point actually advances (decoding a shorter slice each time).
+    Chaque mot est ``(texte, début, fin)`` en secondes depuis le début du tampon.
+    L'audio est ignoré : ces tests exercent la comptabilité de l'accord, pas le
+    décodage. La longueur de chaque tampon reçu est enregistrée dans ``calls``.
     """
 
     name = "fake"
@@ -35,7 +32,7 @@ class FakeBackend:
         self._scripts = list(scripts)
         self.calls: list[int] = []
 
-    def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
+    def transcribe(self, audio):
         self.calls.append(len(audio))
         words = self._scripts.pop(0) if self._scripts else []
         for text, start, end in words:
@@ -48,8 +45,8 @@ def _audio(seconds: float) -> np.ndarray:
 
 def _make(monkeypatch, scripts, **cfg) -> tuple[Transcriber, FakeBackend]:
     backend = FakeBackend(scripts)
-    monkeypatch.setattr(transcriber_mod, "build_backend", lambda **kw: backend)
-    cfg.setdefault("diarization", False)  # streaming tests drive the tagger explicitly
+    monkeypatch.setattr(transcriber_mod, "build_backend", lambda *a, **kw: backend)
+    cfg.setdefault("diarization", False)  # ces tests pilotent le tagger explicitement
     t = Transcriber(Queue(), Queue(), STTConfig(**cfg), stats=None, sample_rate=SR)
     return t, backend
 
@@ -62,22 +59,20 @@ def _drain(q: Queue) -> list[dict]:
 
 
 def test_first_partial_commits_nothing(monkeypatch):
-    # With no previous tail to agree against, the first partial confirms nothing;
-    # all words become the pending tail for the next pass to corroborate.
+    # Sans passe précédente pour corroborer, rien n'est figé : tous les mots
+    # restent des hypothèses que la passe suivante devra confirmer.
     t, backend = _make(monkeypatch, [[("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)]])
 
     t._run_partial(_audio(1.0))
 
     assert t._committed_words == []
-    assert t._prev_tail_texts == ["bonjour", "le", "monde"]
-    assert t._committed_samples == 0
-    assert backend.calls == [SR]  # decoded the whole buffer (nothing committed yet)
+    assert t._prev_words_norm == ["bonjour", "le", "monde"]
+    assert backend.calls == [SR]
 
 
 def test_second_partial_commits_agreed_prefix(monkeypatch):
-    # Two passes agreeing on "bonjour le monde" → that prefix is committed and
-    # the audio cut point advances past the last committed word.
-    t, _ = _make(monkeypatch, [
+    # Deux passes d'accord sur « bonjour le monde » → ce préfixe est figé.
+    t, backend = _make(monkeypatch, [
         [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)],
         [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0), ("est", 1.0, 1.4)],
     ])
@@ -86,38 +81,56 @@ def test_second_partial_commits_agreed_prefix(monkeypatch):
     t._run_partial(_audio(1.4))
 
     assert [w["text"] for w in t._committed_words] == ["bonjour", "le", "monde"]
-    assert t._committed_samples == int(1.0 * SR)  # advanced past "monde" (end=1.0s)
-    assert t._prev_tail_texts == ["est"]  # only the unconfirmed tail remains
+    assert t._prev_words_norm == ["bonjour", "le", "monde", "est"]
+    # Le tampon entier est redonné au moteur à chaque passe : plus de tranches.
+    assert backend.calls == [SR, int(1.4 * SR)]
 
 
-def test_slice_offset_applied_to_committed_timestamps(monkeypatch):
-    # After the cut point advances, later slices start mid-utterance. Words
-    # committed from those slices must have their timestamps shifted back into
-    # absolute (segment-relative) time, and the decoded slice must be shorter.
-    t, backend = _make(monkeypatch, [
-        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)],
-        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0), ("est", 1.0, 1.4)],
-        # Slice now starts at 1.0s; timestamps are relative to the slice.
-        [("est", 0.0, 0.4), ("là", 0.4, 0.8)],
+def test_les_horodatages_restent_absolus(monkeypatch):
+    """Décoder le tampon entier rend les horodatages directement exploitables.
+
+    L'ancien découpage en tranches obligeait à les recaler à la main ; c'était
+    la partie la plus fragile de la boucle. Ils sont désormais bons d'origine.
+    """
+    t, _ = _make(monkeypatch, [
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6)],
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.4)],
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.4), ("est", 1.4, 1.8)],
     ])
 
-    t._run_partial(_audio(1.0))
+    t._run_partial(_audio(0.6))
     t._run_partial(_audio(1.4))
     t._run_partial(_audio(1.8))
 
-    assert [w["text"] for w in t._committed_words] == ["bonjour", "le", "monde", "est"]
-    # "est" was decoded at slice-relative end 0.4s but lives at 1.4s absolute.
+    assert [w["text"] for w in t._committed_words] == ["bonjour", "le", "monde"]
     assert t._committed_words[-1]["end"] == pytest.approx(1.4)
-    assert t._committed_samples == int(1.4 * SR)  # 1.0s prior cut + 0.4s of "est"
-    assert t._prev_tail_texts == ["là"]
-    # Third pass decoded only the tail (1.8s - 1.0s cut = 0.8s), not the full buffer.
-    assert backend.calls[-1] == int(0.8 * SR)
+
+
+def test_le_prefixe_fige_ne_recule_jamais(monkeypatch):
+    """Un mot déjà acquis n'est pas repris, même si le moteur change d'avis.
+
+    Reprendre un mot déjà lu est plus déroutant qu'une petite erreur, que la
+    passe finale corrigera de toute façon.
+    """
+    t, _ = _make(monkeypatch, [
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6)],
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6)],
+        # Le moteur se ravise sur le deuxième mot.
+        [("bonjour", 0.0, 0.4), ("la", 0.4, 0.6), ("suite", 0.6, 1.0)],
+    ])
+
+    t._run_partial(_audio(0.6))
+    t._run_partial(_audio(0.6))
+    assert [w["text"] for w in t._committed_words] == ["bonjour", "le"]
+
+    t._run_partial(_audio(1.0))
+
+    assert [w["text"] for w in t._committed_words] == ["bonjour", "le"]
 
 
 def test_agreement_ignores_case_and_punctuation(monkeypatch):
-    # Whisper flips capitalization / attaches punctuation between passes; the
-    # agreement check normalizes those away, but the committed word keeps its
-    # raw display text.
+    # Le moteur change une capitale ou recolle une ponctuation d'une passe à
+    # l'autre ; l'accord les ignore, mais le mot figé garde son texte brut.
     t, _ = _make(monkeypatch, [
         [("Bonjour", 0.0, 0.5)],
         [("bonjour,", 0.0, 0.5), ("le", 0.5, 0.9)],
@@ -126,18 +139,31 @@ def test_agreement_ignores_case_and_punctuation(monkeypatch):
     t._run_partial(_audio(0.5))
     t._run_partial(_audio(0.9))
 
-    assert [w["text"] for w in t._committed_words] == ["bonjour,"]  # raw text preserved
-    assert t._prev_tail_texts == ["le"]
+    assert [w["text"] for w in t._committed_words] == ["bonjour,"]  # texte brut préservé
+    assert t._prev_words_norm == ["bonjour", "le"]
 
 
-def test_short_tail_is_skipped(monkeypatch):
-    # A new tail shorter than the minimum (0.3s) isn't worth a decode pass.
+def test_un_tampon_trop_court_ne_declenche_pas_de_passe(monkeypatch):
     t, backend = _make(monkeypatch, [[("x", 0.0, 0.1)]])
 
-    t._run_partial(_audio(0.2))  # 0.2s < 0.3s min tail
+    t._run_partial(_audio(0.2))  # 0,2 s < 0,3 s minimum
 
-    assert backend.calls == []  # backend never invoked
+    assert backend.calls == []
     assert t._committed_words == []
+
+
+def test_laffichage_montre_le_fige_puis_lhypothese(monkeypatch):
+    t, _ = _make(monkeypatch, [
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6)],
+        [("bonjour", 0.0, 0.4), ("le", 0.4, 0.6), ("monde", 0.6, 1.0)],
+    ])
+
+    t._run_partial(_audio(0.6))
+    t._run_partial(_audio(1.0))
+
+    words = [e["text"] for e in _drain(t.display_queue) if e.get("type") == "word"]
+    # Dernier instantané : les deux mots figés suivis de l'hypothèse courante.
+    assert words[-3:] == ["bonjour", "le", "monde"]
 
 
 def test_final_segment_postprocesses_and_resets(monkeypatch):
@@ -151,8 +177,7 @@ def test_final_segment_postprocesses_and_resets(monkeypatch):
 
     # Pretend we were mid-stream so we can prove the reset.
     t._committed_words = [{"text": "stale", "start": 0.0, "end": 0.1}]
-    t._committed_samples = 1234
-    t._prev_tail_texts = ["stale"]
+    t._prev_words_norm = ["stale"]
 
     t._run_segment(_audio(1.0), is_final=True)
 
@@ -161,10 +186,9 @@ def test_final_segment_postprocesses_and_resets(monkeypatch):
     assert final and final[0]["text"] == "Bonjour le monde"
     assert saved == ["Bonjour le monde"]
 
-    # Streaming state fully reset for the next utterance.
+    # État de streaming remis à zéro pour l'énoncé suivant.
     assert t._committed_words == []
-    assert t._committed_samples == 0
-    assert t._prev_tail_texts == []
+    assert t._prev_words_norm == []
 
 
 def test_final_segment_attaches_speaker_as_structured_field(monkeypatch):
@@ -249,12 +273,12 @@ def test_diarization_runs_while_the_final_pass_decodes(monkeypatch):
             return "A"
 
     class WaitingBackend(FakeBackend):
-        def transcribe(self, audio, language, beam_size=None, initial_prompt=None):
+        def transcribe(self, audio):
             assert started.wait(timeout=2.0), "diarisation non démarrée pendant le décodage"
-            yield from super().transcribe(audio, language, beam_size, initial_prompt)
+            yield from super().transcribe(audio)
 
     backend = WaitingBackend([[("bonjour", 0.0, 0.5)]])
-    monkeypatch.setattr(transcriber_mod, "build_backend", lambda **kw: backend)
+    monkeypatch.setattr(transcriber_mod, "build_backend", lambda *a, **kw: backend)
     t = Transcriber(Queue(), Queue(), STTConfig(diarization=False), stats=None, sample_rate=SR)
     t.tagger = SlowTagger()
     monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)

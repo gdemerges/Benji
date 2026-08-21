@@ -67,7 +67,7 @@ def build_report_body(
 
     if stt_config is not None:
         lines += [
-            f"- Moteur STT : {stt_config.stt_provider} / modèle {stt_config.model_size}",
+            f"- Moteur STT : {stt_config.stt_provider} / {stt_config.model}",
             f"- Langue : {stt_config.language} · diarisation : "
             f"{stt_config.diarization_backend if stt_config.diarization else 'off'}",
         ]

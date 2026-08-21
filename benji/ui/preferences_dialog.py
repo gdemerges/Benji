@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 from benji.settings import UserSettings
 from benji.ui.style import FONT_UI, current_theme, install_theme_listener
 
-# (code langue Whisper, libellé). "" = détection automatique.
+# (code langue ISO, libellé). "" = détection automatique.
 _LANGUAGES = [
     ("", "Détection automatique"),
     ("fr", "Français"),
@@ -45,7 +45,6 @@ _LANGUAGES = [
     ("nl", "Nederlands"),
 ]
 
-_MODEL_SIZES = ["base", "small", "medium", "large-v3"]
 
 # (secondes, libellé). 0 = désactivé.
 _SUMMARY_INTERVALS = [
@@ -63,11 +62,10 @@ _PROVIDERS = [
     ("remote", "Cloud Benji — abonnement Pro"),
 ]
 
-# Le STT a un choix de plus que le résumé : deux moteurs locaux, aux compromis
-# opposés. Whisper sait tenir compte du glossaire, Parakeet est bien plus rapide.
+# Le STT et le résumé n'offrent pas les mêmes choix : le résumé a un mode
+# « cloud » de développement que la transcription n'a pas.
 _STT_PROVIDERS = [
-    ("parakeet", "Local — Parakeet (rapide, défaut)"),
-    ("local", "Local — Whisper (plus lent, glossaire actif)"),
+    ("parakeet", "Local — sur ce Mac"),
     ("remote", "Cloud Benji — abonnement Pro"),
 ]
 
@@ -148,12 +146,6 @@ class PreferencesDialog(QDialog):
         self._select_data(self._language, self._stt.language or "")
         stt_form.addRow("Langue", self._language)
 
-        self._model = QComboBox()
-        self._model.addItems(_MODEL_SIZES)
-        if self._stt.model_size in _MODEL_SIZES:
-            self._model.setCurrentText(self._stt.model_size)
-        # N'a d'effet que sur le moteur Whisper ; Parakeet n'a qu'un seul modèle.
-        stt_form.addRow("Modèle Whisper", self._model)
 
         self._diarization = QCheckBox("Identifier les locuteurs")
         self._diarization.setChecked(bool(self._stt.diarization))
@@ -190,9 +182,8 @@ class PreferencesDialog(QDialog):
             engine_form.addRow("Résumé", self._summary_provider)
 
             self._hint_engines = QLabel(
-                "Parakeet transcrit environ cinq fois plus vite ; passer à Whisper "
-                "réactive le glossaire. Le cloud Benji nécessite un compte avec "
-                "abonnement Pro. Effet au prochain démarrage."
+                "Le cloud Benji nécessite un compte avec abonnement Pro. "
+                "Effet au prochain démarrage."
             )
             engine_form.addRow(self._hint_engines)
             layout.addWidget(self._engine_box)
@@ -451,16 +442,13 @@ class PreferencesDialog(QDialog):
 
         # --- Transcription : persister + mettre à jour la config (effet au reboot) ---
         language = self._language.currentData() or None
-        model_size = self._model.currentText()
         diarization = self._diarization.isChecked()
         summary_interval = self._summary.currentData()
 
         s.set_value("language", language)
-        s.set_value("model_size", model_size)
         s.set_value("diarization", diarization)
         s.set_value("live_summary_interval_s", summary_interval)
         self._stt.language = language
-        self._stt.model_size = model_size
         self._stt.diarization = diarization
         self._stt.live_summary_interval_s = summary_interval
 

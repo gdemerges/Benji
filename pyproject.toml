@@ -8,7 +8,6 @@ requires-python = ">=3.12"
 authors = [{ name = "Guillaume Demergès" }]
 
 dependencies = [
-    "faster-whisper>=1.0.0",
     "sounddevice>=0.4.6",
     "numpy~=2.3.5",
     "PyQt6~=6.10.2",
@@ -19,9 +18,8 @@ dependencies = [
     "pyobjc-framework-Cocoa>=10.0 ; sys_platform == 'darwin'",
     "pywin32>=306 ; sys_platform == 'win32'",
     "mlx-lm~=0.26.3 ; sys_platform == 'darwin'",
-    "mlx-whisper>=0.4.0 ; sys_platform == 'darwin'",
-    # Moteur de transcription par défaut (STTConfig.stt_provider = "parakeet").
-    # Poids sous licence CC-BY-4.0 : l'attribution NVIDIA est due si distribué.
+    # Moteur de transcription. Poids sous licence CC-BY-4.0 : l'attribution
+    # NVIDIA est due dans le produit distribué.
     "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
 ]
 

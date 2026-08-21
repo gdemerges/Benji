@@ -13,9 +13,9 @@ from benji.config import LLMConfig, STTConfig
 
 
 def test_configs_are_injectable():
-    cfg = AppConfigs(stt=STTConfig(model_size="tiny"), llm=LLMConfig(backend_url="http://x"))
+    cfg = AppConfigs(stt=STTConfig(model="tiny"), llm=LLMConfig(backend_url="http://x"))
     app = BenjiApplication(cfg)
-    assert app.cfg.stt.model_size == "tiny"
+    assert app.cfg.stt.model == "tiny"
     assert app.cfg.llm.backend_url == "http://x"
 
 
@@ -254,10 +254,3 @@ def test_parakeet_est_charge_et_prechauffe_sur_le_thread_principal(monkeypatch):
     assert seen["prechauffe"] is main, "Parakeet préchauffé hors du thread principal"
     assert app.transcriber is not None
     assert app.history is app.transcriber.history
-
-
-def test_seul_parakeet_est_charge_sur_le_thread_principal():
-    """Whisper est bien plus lent à charger : il garde le thread de fond."""
-    assert BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="parakeet"))).loads_model_inline()
-    assert not BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="local"))).loads_model_inline()
-    assert not BenjiApplication(AppConfigs(stt=STTConfig(stt_provider="remote"))).loads_model_inline()

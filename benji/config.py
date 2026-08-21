@@ -1,8 +1,5 @@
-import os
 import platform
 from dataclasses import dataclass, field
-
-import psutil
 
 IS_MACOS = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
@@ -10,23 +7,6 @@ IS_WINDOWS = platform.system() == "Windows"
 
 def _default_font() -> str:
     return ".AppleSystemUIFont" if IS_MACOS else "Segoe UI"
-
-
-def _default_model_size() -> str:
-    """Choisit la taille du modèle Whisper d'après la RAM disponible.
-
-    Pas de sonde CUDA : Benji cible Apple Silicon (MLX), où le décompte de
-    périphériques CUDA vaut toujours zéro. Le tester laissait croire à un
-    chemin GPU qui n'existe pas.
-    """
-    ram_gb = psutil.virtual_memory().total / (1024**3)
-
-    if ram_gb >= 16:
-        # Apple Silicon avec MLX encaisse `medium` confortablement.
-        return "medium"
-    if ram_gb >= 8:
-        return "small"
-    return "base"
 
 
 @dataclass
@@ -55,12 +35,14 @@ class VADConfig:
     max_speech_duration_s: float = 8.0  # Force flush sooner for long utterances
     pre_speech_pad_ms: int = 200  # Less pre-context = smaller audio buffer = faster inference
     partial_interval_ms: int = 400  # Re-transcribe partial audio every N ms (0 = disabled)
-    # Each partial re-transcribes the whole growing buffer, so a fixed interval
-    # makes total partial cost quadratic in segment length. Space partials out as
-    # the buffer grows: effective interval = partial_interval_ms + growth_factor *
-    # current_buffer_ms. The final pass re-transcribes everything anyway, so backing
-    # off on long segments costs almost no perceived quality. 0.0 = fixed interval.
-    partial_growth_factor: float = 0.5
+    # Espacement progressif des passes partielles à mesure que le tampon grandit :
+    # intervalle effectif = partial_interval_ms + growth_factor * durée_tampon_ms.
+    # Hérité de Whisper, dont une passe sur 8 s coûtait ~800 ms : sans ce frein, le
+    # coût total devenait intenable. Parakeet décode le même tampon en ~150 ms, soit
+    # ~38 % d'occupation à cadence fixe — le frein ne protège plus rien et rendait le
+    # direct poussif (jusqu'à 4,4 s entre deux rafraîchissements en fin d'énoncé).
+    # Remis à 0 = cadence fixe. Le mécanisme reste là si un moteur plus lourd revient.
+    partial_growth_factor: float = 0.0
     # Adaptive threshold: lifts speech_threshold above the noise floor in noisy rooms.
     # Effective threshold = max(speech_threshold, p95(non_speech_conf) + adaptive_margin).
     adaptive_threshold: bool = True
@@ -70,24 +52,15 @@ class VADConfig:
 
 @dataclass
 class STTConfig:
-    # Moteur de transcription :
-    #   "parakeet" — Parakeet TDT sur le Mac (défaut) : ~5× plus rapide que
-    #                whisper-medium sur les tampons courts de Benji, à mémoire
-    #                équivalente. Ne sait pas prendre de glossaire : le modèle
-    #                n'accepte aucun conditionnement par le texte.
-    #   "local"    — Whisper sur le Mac : plus lent, mais `glossary` et le
-    #                contexte glissant reprennent effet.
-    #   "remote"   — transcription via le backend Benji (cf. docs/api-contract.md)
+    # "parakeet" : Parakeet TDT sur le Mac (défaut). "remote" : transcription via
+    # le backend Benji (cf. docs/api-contract.md ; coordonnées dans LLMConfig).
     stt_provider: str = "parakeet"
-    # Poids Parakeet utilisés quand stt_provider == "parakeet".
-    parakeet_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
-    model_size: str = field(default_factory=_default_model_size)
-    language: str | None = "fr"  # Force French by default
-    beam_size: int = 5  # Final-pass beam size (quality)
-    partial_beam_size: int = 1  # Partial-pass beam size (speed)
-    context_words: int = 6  # Sliding context injected as initial_prompt
-    cpu_threads: int = field(default_factory=lambda: max(1, os.cpu_count() // 2))
-    compute_type: str = "auto"
+    # Poids du moteur local. Un seul modèle, contrairement à Whisper : la taille
+    # ne se règle pas, il n'y a pas d'arbitrage vitesse/qualité à faire.
+    model: str = "mlx-community/parakeet-tdt-0.6b-v3"
+    # Ne pilote plus la transcription — Parakeet détecte la langue — mais reste
+    # la langue du post-traitement (nombres, interjections) et de la correction LLM.
+    language: str | None = "fr"
     diarization: bool = True  # Enable speaker labeling
     # "pitch" (built-in F0 clustering, no extra deps) or "pyannote" (real embeddings,
     # requires `uv sync --extra diarization` and HF token via env HF_TOKEN).
@@ -95,10 +68,6 @@ class STTConfig:
     diarization_max_speakers: int = 4  # Cap for pyannote clustering (pitch is hard-capped at 2)
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
-    # User glossary: proper nouns / domain terms injected as initial_prompt context
-    # to bias Whisper toward correct spellings (e.g. ["Demergès", "Anthropic", "MLX"]).
-    # Sans effet sur le moteur Parakeet (défaut) — cf. stt_provider.
-    glossary: list[str] = field(default_factory=list)
     # Audio gain control before STT: peak-normalize quiet segments to this target.
     # 0.0 disables. Useful for low-gain microphones.
     agc_target_peak: float = 0.7
