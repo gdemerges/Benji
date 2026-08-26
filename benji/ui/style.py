@@ -136,7 +136,20 @@ def _alpha(color: QColor, pct: int) -> QColor:
 
 
 def current_theme() -> Theme:
-    dark = _is_dark()
+    return theme_for(_is_dark())
+
+
+def light_theme() -> Theme:
+    """La variante claire, quel que soit le thème du système.
+
+    Une seule surface l'exige aujourd'hui : le PDF. Le papier est blanc chez tout
+    le monde — exporter le thème sombre donnerait un document au texte presque
+    blanc sur fond blanc, illisible à l'impression comme à l'écran.
+    """
+    return theme_for(False)
+
+
+def theme_for(dark: bool) -> Theme:
     p = _DARK if dark else _LIGHT
     ink = p["ink"]
     return Theme(

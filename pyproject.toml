@@ -16,6 +16,13 @@ dependencies = [
     "httpx~=0.28.1",
     "keyring>=25.0",
     "pyobjc-framework-Cocoa>=10.0 ; sys_platform == 'darwin'",
+    # État exact de l'autorisation micro au premier lancement (benji/onboarding.py).
+    # Sans elle on ne saurait pas distinguer « refusé » de « silence », et un
+    # refus laisserait l'app muette sans un mot d'explication.
+    "pyobjc-framework-AVFoundation>=10.0 ; sys_platform == 'darwin'",
+    # Téléchargement des poids avec progression au premier lancement. Déjà tiré
+    # transitivement par parakeet-mlx ; déclaré parce qu'on l'importe.
+    "huggingface-hub>=0.24",
     "pywin32>=306 ; sys_platform == 'win32'",
     "mlx-lm~=0.26.3 ; sys_platform == 'darwin'",
     # Moteur des passes partielles. Poids sous licence CC-BY-4.0 :

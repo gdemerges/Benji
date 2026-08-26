@@ -26,11 +26,13 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
+    QPlainTextEdit,
     QSpinBox,
     QVBoxLayout,
 )
 
 from benji.settings import UserSettings
+from benji.stt import lexicon
 from benji.ui.style import FONT_UI, current_theme, install_theme_listener
 
 # (code langue ISO, libellé). "" = détection automatique.
@@ -160,6 +162,30 @@ class PreferencesDialog(QDialog):
         self._hint = QLabel("Ces réglages prennent effet au prochain démarrage.")
         stt_form.addRow(self._hint)
         layout.addWidget(self._stt_box)
+
+        # === Glossaire (redémarrage requis) ===
+        # Le point faible d'une transcription de réunion n'est pas la grammaire,
+        # ce sont les noms propres. Le moteur n'accepte aucun prompt : on relit
+        # donc sa sortie (cf. benji/stt/lexicon.py).
+        self._glossary_box = QGroupBox("GLOSSAIRE")
+        glossary_layout = QVBoxLayout(self._glossary_box)
+        glossary_layout.setContentsMargins(16, 18, 16, 16)
+        glossary_layout.setSpacing(8)
+
+        self._glossary = QPlainTextEdit()
+        self._glossary.setPlaceholderText("Kubernetes\nCrédit Agricole\nDatadog")
+        self._glossary.setPlainText(lexicon.read_raw())
+        self._glossary.setFixedHeight(96)
+        glossary_layout.addWidget(self._glossary)
+
+        self._hint_glossary = QLabel(
+            "Un nom propre ou un terme maison par ligne. Benji remplacera ce qui "
+            "leur ressemble à l'oreille dans le texte final. Ce fichier ne quitte "
+            "jamais votre Mac. Effet au prochain démarrage."
+        )
+        self._hint_glossary.setWordWrap(True)
+        glossary_layout.addWidget(self._hint_glossary)
+        layout.addWidget(self._glossary_box)
 
         # === Moteurs local / cloud Benji (redémarrage requis) ===
         self._engine_box = None
@@ -414,6 +440,12 @@ class PreferencesDialog(QDialog):
             f"font-family: {FONT_UI}; font-size: 11px; color: {rgba(sec)}; background: transparent;"
         )
         self._hint.setStyleSheet(hint_qss)
+        self._hint_glossary.setStyleSheet(hint_qss)
+        self._glossary.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 12px; color: {rgba(label)}; "
+            f"background-color: {rgba(field_bg)}; border: 1px solid {rgba(field_border)}; "
+            "border-radius: 6px; padding: 6px;"
+        )
         if self._hint_engines is not None:
             self._hint_engines.setStyleSheet(hint_qss)
         if self._hint_audio is not None:
@@ -448,6 +480,9 @@ class PreferencesDialog(QDialog):
         s.set_value("language", language)
         s.set_value("diarization", diarization)
         s.set_value("live_summary_interval_s", summary_interval)
+        # Le glossaire n'est pas une préférence QSettings : c'est un fichier de
+        # données utilisateur, écrit en 0600 comme l'historique.
+        lexicon.save_glossary(self._glossary.toPlainText())
         self._stt.language = language
         self._stt.diarization = diarization
         self._stt.live_summary_interval_s = summary_interval

@@ -7,12 +7,18 @@ par le final. Ce qui compte est la latence, et Parakeet ne paie que l'audio reç
 là où Whisper encode toujours une fenêtre paddée de 30 s — 58 ms contre ~680 ms
 sur un tampon de 1,2 s, mesuré sur M4 Pro.
 
-**Passe finale → Whisper, langue forcée.** Le texte y est définitif : il part
-dans l'historique, les exports et les résumés. Parakeet fait de la détection
-automatique sur 25 langues **sans aucun levier pour la forcer** (confirmé par la
-fiche NVIDIA), et bascule en anglais sur des segments difficiles — au milieu
-d'une réunion française, on obtient « the utility devient also the chef
-d'orchestre ». Whisper accepte `language="fr"` : la dérive devient impossible.
+**Passe finale → Parakeet, rattrapé par Whisper.** Le texte y est définitif : il
+part dans l'historique, les exports et les résumés. Parakeet fait de la
+détection automatique sur 25 langues **sans aucun levier pour la forcer**
+(confirmé par la fiche NVIDIA), et bascule en anglais sur des segments
+difficiles — au milieu d'une réunion française, on obtient « the utility devient
+also the chef d'orchestre ». Whisper accepte `language="fr"` : la dérive devient
+impossible, mais il coûte ~5× plus cher sur *tous* les segments.
+
+D'où le moteur hybride (`HybridFinalBackend`, défaut) : décoder avec Parakeet,
+puis **relire le texte produit** et ne relancer Whisper que sur les segments qui
+ont visiblement dérivé (cf. `benji/stt/language.py`). La garantie est conservée
+là où elle se joue ; le coût n'est payé que là où il sert.
 
 Le repli CPU faster-whisper, lui, reste retiré : Benji est Apple Silicon
 exclusivement.
@@ -20,9 +26,13 @@ exclusivement.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
+
+from benji.stt.language import drifts_from
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +50,9 @@ _MLX_WHISPER_MODELS = {
 
 class STTBackend(Protocol):
     name: str
+    # False = ne pas préchauffer au démarrage (le backend charge ses poids
+    # paresseusement, et le préchauffage annulerait ce gain). Absent = True.
+    eager_warmup: bool
 
     def transcribe(self, audio) -> Iterator[dict]:
         """Rend des mots `{"text": str, "start": float, "end": float}`.
@@ -143,24 +156,39 @@ class WhisperBackend:
     Ne sert que sur la passe finale, d'où la chaîne de repli en température : un
     décodage glouton raté est retenté plus chaud, ce qu'on ne peut pas se
     permettre sur une partielle mais qui vaut le coup sur du définitif.
+
+    **Chargement paresseux.** `mlx_whisper.transcribe` charge et met en cache le
+    modèle au premier appel ; construire ce backend ne coûte donc qu'un import,
+    et les ~1,5 Go de poids ne sont payés que si un segment en a réellement
+    besoin. En moteur hybride, une réunion française entière peut se dérouler
+    sans jamais les charger.
     """
 
     name = "whisper"
+    # Le préchauffage forcerait le chargement des poids au démarrage, ce que le
+    # chargement paresseux existe précisément pour éviter.
+    eager_warmup = False
 
     def __init__(self, model_size: str = "medium", language: str | None = "fr"):
-        import mlx_whisper
-
-        self._mlx = mlx_whisper
+        self._mlx = None
         self.repo = _MLX_WHISPER_MODELS.get(
             model_size, f"mlx-community/whisper-{model_size}-mlx"
         )
         self.language = language
-        log.info("Chargement de Whisper '%s' (langue : %s)...", self.repo, language or "auto")
+        log.info("Whisper '%s' armé (langue : %s) — poids chargés au 1er usage",
+                 self.repo, language or "auto")
+
+    def _engine(self):
+        if self._mlx is None:
+            import mlx_whisper
+
+            self._mlx = mlx_whisper
+        return self._mlx
 
     def transcribe(self, audio) -> Iterator[dict]:
         if audio is None or len(audio) == 0:
             return
-        result = self._mlx.transcribe(
+        result = self._engine().transcribe(
             audio,
             path_or_hf_repo=self.repo,
             language=self.language,
@@ -179,24 +207,114 @@ class WhisperBackend:
                     yield {"text": text, "start": w.get("start"), "end": w.get("end")}
 
 
+class HybridFinalBackend:
+    """Parakeet d'abord, Whisper **seulement si la langue a dérivé**.
+
+    Le compromis précédent était binaire : payer ~800 ms de Whisper sur *chaque*
+    segment final pour se prémunir d'une dérive qui ne concerne qu'une poignée
+    d'entre eux, ou garder Parakeet partout et laisser passer « the utility
+    devient also the chef d'orchestre » dans l'historique.
+
+    Ici l'arbitrage se fait **sur le texte produit** : on décode avec Parakeet
+    (~150 ms), on regarde les mots-outils du résultat (cf. `stt/language.py`), et
+    on ne relance Whisper que si le segment n'est visiblement pas dans la langue
+    attendue — ou si Parakeet n'a rien rendu. Sur une réunion française propre,
+    la passe lourde ne se déclenche presque jamais et ses poids ne sont même pas
+    chargés.
+
+    Le prix : la passe finale ne streame plus mot à mot, puisqu'il faut avoir lu
+    tout le texte de Parakeet pour décider s'il est recevable. C'est sans effet
+    visible — les mots de l'énoncé sont déjà à l'écran, posés par les passes
+    partielles, et le final les remplace en bloc de toute façon.
+
+    **Whisper tourne sur un thread dédié, créé une fois pour toutes.** MLX lie
+    ses tableaux au stream du thread qui les évalue en premier : chargé depuis le
+    thread STT, le modèle deviendrait inutilisable si le superviseur relançait ce
+    thread après un incident (cf. `benji/app.py`). Un worker qui vit aussi
+    longtemps que le backend supprime la question.
+    """
+
+    name = "hybrid"
+    eager_warmup = False
+
+    def __init__(self, fast: STTBackend, slow: STTBackend, language: str | None):
+        self.fast = fast
+        self.slow = slow
+        self.language = language
+        self._pool: ThreadPoolExecutor | None = None
+
+    def _slow_pool(self) -> ThreadPoolExecutor:
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="STT-whisper"
+            )
+        return self._pool
+
+    def transcribe(self, audio) -> Iterator[dict]:
+        words = list(self.fast.transcribe(audio))
+        text = " ".join(w["text"] for w in words)
+        if words and not drifts_from(text, self.language):
+            yield from words
+            return
+
+        reason = "aucun mot rendu" if not words else "langue dérivée"
+        log.info("Passe finale reprise par Whisper (%s)", reason)
+        try:
+            # `list(...)` DANS le worker : le générateur ne doit pas être
+            # consommé depuis le thread appelant, sinon l'inférence repartirait
+            # sur le mauvais stream MLX.
+            rescued = self._slow_pool().submit(lambda: list(self.slow.transcribe(audio))).result()
+        except Exception as e:
+            log.warning("Repli Whisper impossible (%s) — on garde Parakeet", e)
+            yield from words
+            return
+        yield from (rescued or words)
+
+    def shutdown(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
+
+
 def build_backend(model_id: str = DEFAULT_MODEL) -> STTBackend:
     """Moteur des passes partielles."""
     return ParakeetBackend(model_id)
 
 
-def build_final_backend(engine: str, model_size: str, language: str | None) -> STTBackend:
+def _whisper_available() -> bool:
+    """Présence de mlx-whisper, sans en charger les poids.
+
+    `WhisperBackend` n'importe plus le module à la construction (chargement
+    paresseux) : sans cette sonde, l'absence du paquet ne se manifesterait qu'au
+    premier segment, en pleine réunion.
+    """
+    return importlib.util.find_spec("mlx_whisper") is not None
+
+
+def build_final_backend(
+    engine: str, model_size: str, language: str | None, fast: STTBackend | None = None
+) -> STTBackend:
     """Moteur de la passe finale — celui dont le texte est conservé.
 
-    `engine="parakeet"` renvoie None : l'appelant réutilise alors le moteur des
-    partielles, au prix de la garantie de langue.
+    - `"hybrid"` (défaut) — Parakeet, relayé par Whisper sur les seuls segments
+      qui ont dérivé. Exige `fast`, le moteur des partielles, qu'il réutilise.
+    - `"whisper"` — Whisper sur tous les finals : la garantie maximale, au prix
+      fort. Le repli si l'hybride déçoit en réunion.
+    - `"parakeet"` — renvoie None : l'appelant réutilise le moteur des
+      partielles, au prix de la garantie de langue.
     """
-    if engine != "whisper":
+    if engine == "parakeet":
         return None
-    try:
-        return WhisperBackend(model_size, language)
-    except ImportError:
+    if not _whisper_available():
         log.warning(
             "mlx-whisper absent : la passe finale retombe sur Parakeet, dont la "
             "langue n'est pas garantie."
         )
         return None
+    whisper = WhisperBackend(model_size, language)
+    if engine == "whisper":
+        return whisper
+    if fast is None:
+        log.warning("Moteur hybride demandé sans moteur rapide — Whisper seul.")
+        return whisper
+    return HybridFinalBackend(fast, whisper, language)

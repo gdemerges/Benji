@@ -11,10 +11,13 @@ from pathlib import Path
 from PyQt6.QtCore import QFileSystemWatcher, QSize, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTextBrowser,
@@ -65,15 +68,19 @@ class SummariesTab(QWidget):
         self.preview.setPlaceholderText("Cliquez sur un résumé pour le voir")
 
         self.copy_btn = QPushButton("Copier")
+        # Un résumé n'a d'intérêt que s'il peut partir : il était jusqu'ici
+        # copiable, ou révélé dans le Finder sous la forme d'un .md que le
+        # destinataire ne sait pas ouvrir.
+        self.export_btn = QPushButton("Exporter…")
         self.reveal_btn = QPushButton("Révéler dans Finder")
-        self.copy_btn.setObjectName("toolbar_btn")
-        self.reveal_btn.setObjectName("toolbar_btn")
-        self.copy_btn.setEnabled(False)
-        self.reveal_btn.setEnabled(False)
+        for btn in (self.copy_btn, self.export_btn, self.reveal_btn):
+            btn.setObjectName("toolbar_btn")
+            btn.setEnabled(False)
 
         right_top = QHBoxLayout()
         right_top.setContentsMargins(12, 8, 12, 4)
         right_top.addWidget(self.copy_btn)
+        right_top.addWidget(self.export_btn)
         right_top.addWidget(self.reveal_btn)
         right_top.addStretch()
 
@@ -97,6 +104,7 @@ class SummariesTab(QWidget):
     def _wire(self) -> None:
         self.list_widget.currentItemChanged.connect(self._on_selection)
         self.copy_btn.clicked.connect(self._copy_selected)
+        self.export_btn.clicked.connect(self._open_export_menu)
         self.reveal_btn.clicked.connect(self._reveal_selected)
 
     def _install_watcher(self) -> None:
@@ -260,6 +268,7 @@ class SummariesTab(QWidget):
             and not path.startswith(_HEADER_PREFIX)
         )
         self.copy_btn.setEnabled(is_real_file)
+        self.export_btn.setEnabled(is_real_file)
         self.reveal_btn.setEnabled(is_real_file)
         if not is_real_file:
             if path is None:
@@ -272,20 +281,56 @@ class SummariesTab(QWidget):
             self.preview.setPlainText(f"Erreur de lecture : {e}")
 
     def _copy_selected(self) -> None:
-        path = self._selected_path()
-        if not path or path.startswith(_PENDING_PREFIX) or path.startswith(_HEADER_PREFIX):
+        path = self._real_selected_path()
+        if path is None:
             return
         try:
-            QGuiApplication.clipboard().setText(Path(path).read_text(encoding="utf-8"))
+            QGuiApplication.clipboard().setText(path.read_text(encoding="utf-8"))
         except Exception:
             log.exception("Copy failed")
 
-    def _reveal_selected(self) -> None:
-        path = self._selected_path()
-        if not path or path.startswith(_PENDING_PREFIX) or path.startswith(_HEADER_PREFIX):
+    def _open_export_menu(self) -> None:
+        path = self._real_selected_path()
+        if path is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("Document (.pdf)", lambda: self._export(path, "pdf"))
+        menu.addAction("Markdown (.md)", lambda: self._export(path, "md"))
+        menu.exec(self.export_btn.mapToGlobal(self.export_btn.rect().bottomLeft()))
+
+    def _export(self, source: Path, fmt: str) -> None:
+        text = source.read_text(encoding="utf-8")
+        default = str(Path.home() / "Downloads" / f"{source.stem}.{fmt}")
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Exporter le résumé", default,
+            "PDF (*.pdf)" if fmt == "pdf" else "Markdown (*.md)",
+        )
+        if not target:
             return
         try:
-            subprocess.run(["open", "-R", path], check=False)
+            if fmt == "pdf":
+                from benji.ui.pdf_export import write_pdf
+
+                write_pdf(text, target, title=source.stem)
+            else:
+                Path(target).write_text(text, encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, "Benji", f"Export impossible : {e}")
+
+    def _real_selected_path(self) -> Path | None:
+        """Chemin du résumé sélectionné, ou None si la ligne n'en est pas un
+        (en-tête de jour, résumé en cours de génération)."""
+        path = self._selected_path()
+        if not path or path.startswith(_PENDING_PREFIX) or path.startswith(_HEADER_PREFIX):
+            return None
+        return Path(path)
+
+    def _reveal_selected(self) -> None:
+        path = self._real_selected_path()
+        if path is None:
+            return
+        try:
+            subprocess.run(["open", "-R", str(path)], check=False)
         except Exception:
             log.exception("Reveal failed")
 

@@ -188,3 +188,23 @@ def test_device_enumeration_failure_does_not_break_preferences(qapp, tmp_path):
     assert dlg._system_device.count() == 1
     assert "BlackHole" in dlg._hint_audio.text()
     dlg.close()
+
+
+def test_le_glossaire_est_charge_et_enregistre_en_0600(qapp, tmp_path, monkeypatch):
+    """Le glossaire est une donnée utilisateur, pas une préférence QSettings :
+    il liste des clients et des projets, il est donc écrit comme l'historique."""
+    from benji.stt import lexicon
+    from benji.ui.preferences_dialog import PreferencesDialog
+
+    path = tmp_path / "glossary.txt"
+    path.write_text("Datadog\n", encoding="utf-8")
+    monkeypatch.setattr(lexicon, "glossary_path", lambda: path)
+
+    dlg = PreferencesDialog(STTConfig(), UIConfig(), _settings(tmp_path))
+    assert dlg._glossary.toPlainText() == "Datadog\n"
+
+    dlg._glossary.setPlainText("Datadog\nKubernetes")
+    dlg._save()
+
+    assert lexicon.load_terms(path) == ["Datadog", "Kubernetes"]
+    assert oct(path.stat().st_mode)[-3:] == "600"

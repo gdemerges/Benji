@@ -1,0 +1,22 @@
+Benji — première ouverture
+==========================
+
+Cette version n'est pas signée par Apple. Gatekeeper refuse donc de l'ouvrir
+au double-clic : c'est le comportement normal de macOS pour une app distribuée
+hors App Store sans certificat de développeur, pas un problème de l'app.
+
+Pour l'ouvrir la première fois :
+
+  1. Glissez Benji dans le dossier Applications.
+  2. Dans Applications, faites un CLIC DROIT sur Benji, puis « Ouvrir ».
+  3. Cliquez « Ouvrir » dans l'avertissement.
+
+C'est à faire une seule fois : les lancements suivants se font au double-clic.
+
+Si macOS refuse quand même (« Benji est endommagée »), c'est l'attribut de
+quarantaine posé par le navigateur. Dans le Terminal :
+
+  xattr -dr com.apple.quarantine /Applications/Benji.app
+
+Au premier lancement, Benji vous demandera le micro et téléchargera son moteur
+de transcription (~4 Go, une seule fois). Tout reste sur votre Mac.

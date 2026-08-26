@@ -374,3 +374,85 @@ def test_sans_moteur_final_le_moteur_des_partielles_prend_le_relais(monkeypatch)
     t, backend = _make(monkeypatch, [[("bonjour", 0.0, 0.5)]])
 
     assert t.final_backend is t.backend
+
+
+# --- glossaire utilisateur ---
+
+
+def test_le_glossaire_corrige_le_texte_final(monkeypatch):
+    """Un terme du glossaire rattrape ce que le moteur a massacré.
+
+    C'est le seul levier qui reste depuis le retrait d'`initial_prompt` avec
+    Whisper : on ne souffle plus rien au modèle, on relit sa sortie.
+    """
+    from benji.stt import lexicon
+
+    t, _ = _make(monkeypatch, [[("On", 0.0, 0.2), ("déploie", 0.2, 0.6),
+                                ("kubernétesse", 0.6, 1.2)]])
+    t._lexicon = lexicon.compile_terms(["Kubernetes"])
+    t.history = _FakeHistory()
+
+    t._run_segment(_audio(1.2), is_final=True)
+
+    assert t.history.added == [("On déploie Kubernetes", None)]
+
+
+def test_le_glossaire_ne_touche_pas_les_partielles(monkeypatch):
+    """Voir un mot se réécrire sous les yeux est plus déroutant qu'une coquille
+    passagère — et le texte partiel est remplacé par le final de toute façon."""
+    from benji.stt import lexicon
+
+    t, _ = _make(monkeypatch, [[("kubernétesse", 0.0, 0.6)]])
+    t._lexicon = lexicon.compile_terms(["Kubernetes"])
+
+    t._run_partial(_audio(0.6))
+
+    words = [m["text"] for m in _drain(t.display_queue) if m["type"] == "word"]
+    assert words == ["kubernétesse"]
+
+
+def test_glossaire_desactive_ne_lit_pas_le_disque(monkeypatch):
+    """`STTConfig.glossary = False` doit court-circuiter jusqu'à la lecture."""
+    read = []
+    monkeypatch.setattr(transcriber_mod, "load_terms", lambda *a: read.append(1) or [])
+
+    t, _ = _make(monkeypatch, [[]], glossary=False)
+
+    assert t._lexicon == []
+    assert read == []
+
+
+# --- préchauffage sélectif ---
+
+
+def test_un_backend_paresseux_nest_pas_prechauffe(monkeypatch):
+    """Préchauffer Whisper au démarrage chargerait les ~1,5 Go que son
+    chargement paresseux existe précisément pour éviter."""
+    t, backend = _make(monkeypatch, [[], []])
+
+    class _Lazy:
+        name = "hybrid"
+        eager_warmup = False
+
+        def __init__(self):
+            self.calls = 0
+
+        def transcribe(self, audio):
+            self.calls += 1
+            return iter(())
+
+    lazy = _Lazy()
+    t.final_backend = lazy
+
+    t.warmup()
+
+    assert lazy.calls == 0
+    assert backend.calls, "le moteur des partielles, lui, doit être préchauffé"
+
+
+class _FakeHistory:
+    def __init__(self):
+        self.added: list[tuple] = []
+
+    def add(self, text, speaker=None, meeting_id=None):
+        self.added.append((text, speaker))

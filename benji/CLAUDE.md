@@ -12,13 +12,21 @@
 
 `app.py` est le **composition root** : la classe `BenjiApplication` porte l'état et découpe le démarrage/arrêt en phases (`_build_configs`, `_build_account`, `_build_pipeline`, `_create_qapp`, `_load_transcriber`, `_start_stt`, `_build_display`, `_build_windows`, `_build_tray_and_shortcuts`, `shutdown`). Les cinq configs sont regroupées dans `AppConfigs` (injectable → les phases non-Qt sont testables sans lancer l'app, cf. `tests/test_app_composition.py`).
 
-`config.py` contient tous les paramètres sous forme de dataclasses (`AudioConfig`, `VADConfig`, `STTConfig`, `UIConfig`). La taille du modèle Whisper est auto-sélectionnée au démarrage selon RAM/GPU.
+`config.py` contient tous les paramètres sous forme de dataclasses (`AudioConfig`, `VADConfig`, `STTConfig`, `UIConfig`, `LLMConfig`).
+
+`onboarding.py` — premier lancement, **sans Qt** : état de l'autorisation micro (AVFoundation, `UNKNOWN` plutôt qu'une affirmation fausse si l'API manque), présence des poids dans le cache HF, et `ModelDownloader` dont la progression est **observée sur le disque** (l'API tqdm de `huggingface_hub` n'est pas stable d'une version à l'autre ; compter les octets marche partout et compte aussi ce qui était déjà là). Le marqueur vit dans les données utilisateur, pas dans QSettings.
+
+`hotkeys.py` — raccourci **global** macOS via Carbon. Voir la note du CLAUDE.md racine sur le choix de Carbon plutôt que `NSEvent.addGlobalMonitor`. `parse_shortcut()` est pure et refuse une touche sans modificateur : la réserver la retirerait de toutes les autres apps.
+
+`search.py` — recherche plein-texte **pure** : insensible aux accents et à la casse, tous les termes présents dans n'importe quel ordre, le locuteur compte comme texte cherchable. À l'échelle d'une réunion, la proximité entre deux mots ne veut rien dire.
 
 `paths.py` — emplacement des données utilisateur (`~/Library/Application Support/Benji`) vs cache re-téléchargeable (`~/.cache/benji`, modèles seulement), avec migration au premier accès. Les chemins sont résolus **à l'appel**, jamais à l'import.
 
 `meetings.py` — registre des réunions (id, titre, début, fin) dans `meetings.json` (0600, écriture atomique). La réunion courante est un état **du process** (plusieurs `TranscriptionHistory` écrivent le même fichier) et n'est ouverte que par la première transcription : `current_meeting_id()` lit sans créer.
 
-`history.py` + `stats.py` reçoivent chaque utterance finale pour persister l'historique et les métriques de session. `add()` est sur le chemin chaud : la troncature est amortie par un compteur en mémoire, jamais une relecture du fichier par segment. Chaque entrée porte son `meeting`.
+`llm/titler.py` — nomme la réunion en cours à partir de ses premières phrases, via le modèle local déjà chargé. Trois règles : **on n'écrase jamais un titre choisi** (la condition est que le titre soit *exactement* celui par défaut), on attend d'avoir de quoi juger (300 caractères), et on ne nomme qu'une fois — un titre qui bouge en cours de réunion serait pire que l'horodatage. Le titre est du contenu de réunion : il n'est pas loggué.
+
+`history.py` + `stats.py` reçoivent chaque utterance finale pour persister l'historique et les métriques de session. `add()` est sur le chemin chaud : la troncature est amortie par un compteur en mémoire, jamais une relecture du fichier par segment. Chaque entrée porte son `meeting`. `group_by_meeting()` rend tout le fichier indexé par réunion **en une lecture** — la fenêtre Réunions relisait le fichier une fois par réunion pour compter les échanges.
 
 `export.py` — rendu pur (sans Qt) des entrées d'historique vers `txt` / `md` / `srt`, avec renommage optionnel des locuteurs (`speaker_names`). Le SRT dérive les bornes de temps des horodatages (fin d'un segment = début du suivant, durée estimée pour le dernier). Câblé aux boutons Copier/Exporter de `history_window`.
 

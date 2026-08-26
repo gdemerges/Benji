@@ -59,15 +59,22 @@ class STTConfig:
     model: str = "mlx-community/parakeet-tdt-0.6b-v3"
     # Moteur de la **passe finale** — celle dont le texte part dans l'historique,
     # les exports et les résumés.
-    #   "whisper"  — langue forcée (défaut). Parakeet fait de la détection auto
-    #                sur 25 langues sans aucun levier pour la contraindre, et
-    #                bascule en anglais sur des segments difficiles : au milieu
-    #                d'une réunion française on récupère « the utility devient
-    #                also the chef d'orchestre ». Whisper rend ça impossible.
+    #   "hybrid"   — Parakeet, rattrapé par Whisper (défaut). Le segment est
+    #                décodé par Parakeet puis *relu* : on ne relance Whisper que
+    #                si le texte n'est visiblement pas dans `language` (cf.
+    #                stt/language.py). Garantie conservée là où elle se joue,
+    #                coût payé seulement là où il sert — et les poids de Whisper
+    #                ne sont chargés que si un segment en a besoin.
+    #   "whisper"  — Whisper sur *tous* les finals : ~800 ms par segment, la
+    #                garantie maximale. Le repli si l'hybride déçoit en réunion.
     #   "parakeet" — réutilise le moteur des partielles : ~5× plus rapide sur le
-    #                final, mais la langue n'est plus garantie.
-    final_engine: str = "whisper"
+    #                final, mais la langue n'est plus garantie du tout.
+    final_engine: str = "hybrid"
     final_model_size: str = "medium"
+    # Glossaire utilisateur (noms propres, jargon maison) appliqué au texte
+    # final, cf. stt/lexicon.py. Le fichier vit dans les données utilisateur ;
+    # ce drapeau ne fait qu'activer sa lecture.
+    glossary: bool = True
     # Langue imposée à la passe finale, et langue du post-traitement (nombres,
     # interjections) et de la correction LLM. None = détection automatique.
     language: str | None = "fr"
@@ -78,6 +85,10 @@ class STTConfig:
     diarization_max_speakers: int = 4  # Cap for pyannote clustering (pitch is hard-capped at 2)
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
+    # Nomme la réunion en cours à partir de ses premières phrases, via le modèle
+    # local déjà chargé (cf. benji/llm/titler.py). Un titre choisi à la main
+    # n'est jamais écrasé. False = les réunions gardent leur horodatage.
+    auto_title: bool = True
     # Audio gain control before STT: peak-normalize quiet segments to this target.
     # 0.0 disables. Useful for low-gain microphones.
     agc_target_peak: float = 0.7
@@ -144,6 +155,12 @@ class UIConfig:
     # Multi-monitor: anchor the overlay on the screen under the cursor (the
     # user's active display), re-evaluated between utterances. False = primary.
     follow_active_screen: bool = True
+    # Raccourci **global** (actif même quand Benji n'a pas le focus) pour couper
+    # et rendre le micro : en réunion, le focus est sur Teams ou Zoom, donc les
+    # QShortcut posés sur l'overlay ne répondent pas. Combinaison à quatre
+    # modificateurs pour ne rien prendre à personne. "" = désactivé.
+    # cf. benji/hotkeys.py.
+    global_hotkey_pause: str = "Ctrl+Alt+Cmd+B"
     # Diagnostic only: verbose macOS window-state dump every 5s (off in prod).
     # Same info is available on demand via Ctrl+Shift+D.
     debug_macos_window: bool = False

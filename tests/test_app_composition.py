@@ -254,3 +254,45 @@ def test_parakeet_est_charge_et_prechauffe_sur_le_thread_principal(monkeypatch):
     assert seen["prechauffe"] is main, "Parakeet préchauffé hors du thread principal"
     assert app.transcriber is not None
     assert app.history is app.transcriber.history
+
+
+# --- premier lancement ---
+
+
+def test_l_assistant_est_saute_quand_le_marqueur_existe(monkeypatch):
+    from benji import onboarding
+
+    monkeypatch.setattr(onboarding, "needs_onboarding", lambda *a: False)
+
+    app = BenjiApplication()
+    # Rien à instancier : la fenêtre n'est importée que si l'assistant tourne.
+    assert app._run_onboarding() is True
+
+
+def test_le_mode_remote_na_pas_d_assistant(monkeypatch):
+    """Ni modèle local à télécharger, ni écran à montrer : la transcription se
+    fait côté backend."""
+    from benji import onboarding
+
+    monkeypatch.setattr(onboarding, "needs_onboarding", lambda *a: True)
+
+    app = BenjiApplication()
+    app.remote_mode = True
+
+    assert app._run_onboarding() is True
+
+
+def test_le_raccourci_global_est_optionnel():
+    """Un raccourci vide ne doit pas armer Carbon pour rien."""
+    from benji.config import UIConfig
+
+    app = BenjiApplication(AppConfigs(ui=UIConfig(global_hotkey_pause="")))
+    app._install_global_hotkeys()
+
+    assert app.global_hotkeys is None
+
+
+def test_l_arret_est_idempotent_sans_raccourci_ni_titreur():
+    app = BenjiApplication()
+    app.shutdown()
+    app.shutdown()

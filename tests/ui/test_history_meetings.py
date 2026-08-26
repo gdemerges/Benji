@@ -125,3 +125,61 @@ def test_le_nom_de_fichier_d_export_suit_le_titre(window):
     window.reload_meetings()
 
     assert window._meeting_slug() == "point-produit-q3"
+
+
+# --- recherche ---
+
+
+def test_la_recherche_filtre_la_liste_des_reunions(window):
+    window.history.add("On parle du budget.")
+    meetings.start_meeting("Autre sujet")
+    window.history.add("On parle de la livraison.")
+    window.reload_meetings()
+    assert window.meeting_list.count() == 2
+
+    window.search.setText("budget")
+
+    assert window.meeting_list.count() == 1
+
+
+def test_la_recherche_filtre_aussi_le_compte_rendu(window):
+    window.history.add("On parle du budget.")
+    window.history.add("Et de la livraison.")
+    window.reload_meetings()
+
+    window.search.setText("budget")
+
+    assert "budget" in _shown(window)
+    assert "livraison" not in _shown(window)
+
+
+def test_la_recherche_annonce_le_nombre_de_resultats(window):
+    window.history.add("Le budget est validé.")
+    window.history.add("Rien à voir.")
+    window.reload_meetings()
+
+    window.search.setText("budget")
+
+    assert window.meta_label.text() == "1 résultat sur 2"
+
+
+def test_effacer_la_recherche_rend_tout(window):
+    window.history.add("On parle du budget.")
+    window.history.add("Et de la livraison.")
+    window.reload_meetings()
+    window.search.setText("budget")
+
+    window.search.setText("")
+
+    assert "livraison" in _shown(window)
+    assert window.meeting_list.count() == 1
+
+
+def test_une_reunion_est_trouvee_par_son_titre(window):
+    window.history.add("Contenu quelconque.")
+    meetings.store().rename(meetings.current_meeting_id(), "Point produit")
+    window.reload_meetings()
+
+    window.search.setText("produit")
+
+    assert window.meeting_list.count() == 1

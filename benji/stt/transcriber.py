@@ -13,6 +13,7 @@ from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend, build_final_backend
 from benji.stt.diarization import build_tagger
+from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
 from benji.stt.postprocessing import is_hallucination, postprocess_text
 
 
@@ -75,11 +76,17 @@ class Transcriber:
             self.config.final_engine,
             self.config.final_model_size,
             self.config.language,
+            fast=self.backend,
         ) or self.backend
         log.info(
             "Moteurs prêts — partielles : %s · finale : %s",
             self.backend.name, self.final_backend.name,
         )
+
+        # Glossaire utilisateur, appliqué au texte final (cf. stt/lexicon.py).
+        # Chargé une fois : le fichier est édité depuis les Préférences, et un
+        # rechargement à chaud ferait relire le disque à chaque segment.
+        self._lexicon = compile_terms(load_terms()) if self.config.glossary else []
 
     def warmup(self) -> None:
         """Décodage à blanc pour amortir la compilation des noyaux Metal.
@@ -87,10 +94,18 @@ class Transcriber:
         La liaison du modèle au stream MLX, elle, est faite par le backend au
         chargement (`mx.eval` des poids) : ce préchauffage-ci ne sert plus qu'à
         payer la compilation avant la première vraie phrase, pas après.
+
+        Les backends à chargement paresseux (`eager_warmup = False`, cf. Whisper
+        et l'hybride) sont **sautés** : les préchauffer chargerait au démarrage
+        les poids que leur paresse existe pour éviter — jusqu'à 1,5 Go qu'une
+        réunion française entière peut ne jamais réclamer.
         """
         silence = np.zeros(self.sample_rate, dtype=np.float32)
         for backend in {id(self.backend): self.backend,
                         id(self.final_backend): self.final_backend}.values():
+            if not getattr(backend, "eager_warmup", True):
+                log.info("Préchauffage de %s différé (chargement paresseux)", backend.name)
+                continue
             try:
                 t0 = time.monotonic()
                 for _ in backend.transcribe(silence):
@@ -216,6 +231,10 @@ class Transcriber:
         full_text = postprocess_text(
             " ".join(w["text"] for w in words), language=self.config.language
         )
+        # Glossaire : seulement sur le final. Le partiel est jeté de toute façon,
+        # et voir un mot se réécrire sous les yeux est plus déroutant qu'une
+        # coquille passagère.
+        full_text = apply_lexicon(full_text, self._lexicon)
         if is_hallucination(full_text):
             if speaker_future is not None:
                 speaker_future.cancel()

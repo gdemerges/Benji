@@ -64,7 +64,16 @@ def markdown_css(theme: Theme) -> str:
 def render_markdown(browser: QTextBrowser, text: str) -> None:
     """Rend `text` puis repose les marges de titre que le CSS ne peut pas fixer."""
     browser.setMarkdown(text)
-    doc = browser.document()
+    apply_heading_margins(browser.document())
+
+
+def apply_heading_margins(doc) -> None:
+    """Repose les marges de titre sur un `QTextDocument` déjà rendu.
+
+    Séparé de `render_markdown` parce que l'export PDF compose un document nu,
+    sans widget autour : il a besoin des mêmes marges, sinon les sections du
+    compte rendu se collent les unes aux autres sur le papier.
+    """
     block = doc.begin()
     while block.isValid():
         level = block.blockFormat().headingLevel()

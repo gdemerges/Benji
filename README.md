@@ -14,10 +14,12 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 
 - **Streaming word-by-word display** — words appear progressively as you speak, stabilized with LocalAgreement-2 (a word is shown as confirmed once two successive partial passes agree on it)
 - **Local transcription** — the model runs on-device; no API key, nothing leaves your machine
+- **Guided first run** — microphone permission and model download (~4 GB) explained and shown with progress, instead of a frozen window
 - **Built for short buffers** — Parakeet decodes only the audio it is given, where Whisper always pads to a 30 s window: ~58 ms per partial pass instead of ~680 ms, measured on an M4 Pro
 - **Meeting capture** — mixes your microphone with the system audio of a video call, so both sides of the conversation get transcribed (requires a loopback driver, see below)
 - **Apple Silicon GPU** via MLX
-- **French by default** (`STTConfig.language = "fr"`) — drives post-processing and LLM correction; the model itself detects the language
+- **French by default** (`STTConfig.language = "fr"`) — Parakeet detects the language on its own and cannot be forced, so the final pass **re-reads its output** and only re-runs Whisper (which can be pinned to a language) on segments that drifted
+- **User glossary** — proper nouns and in-house jargon are matched phonetically in the final text ("data dogue" → "Datadog"), edited in Preferences, never logged or sent anywhere
 - **Voice Activity Detection** — Silero VAD (ONNX) with an adaptive threshold that lifts above the noise floor in noisy rooms
 - **Two launch modes**:
   - **Overlay** — always-on-top, click-through subtitle bar (CLI launch)
@@ -27,6 +29,9 @@ Every cloud-transcription tool ships your meetings to someone else's server. Ben
 - **Live rolling summary** — periodic LLM summary of the running transcript
 - **AGC** — peak-normalize quiet microphones before transcription
 - **History** — every final utterance is saved with a timestamp, tagged with the meeting it belongs to, to `~/Library/Application Support/Benji/history.jsonl` (migrated automatically from the old `~/.cache/benji` location)
+- **Searchable meetings** — accent-insensitive full-text search across every meeting, filtering both the list and the transcript
+- **Self-naming meetings** — the local model proposes a title from the first sentences; a title you chose is never overwritten
+- **Export** — txt / Markdown / SRT, plus **PDF** for the one copy you actually send to someone
 - **Private by construction** — no telemetry, no account required, no network call in the default configuration
 
 ## Architecture
@@ -96,11 +101,18 @@ BENJI_LAUNCH_MODE=window uv run benji
 | `Ctrl+Shift+S` | Show/hide the live summary window |
 | `Ctrl+Shift+D` | Dump current macOS window state (diagnostic) |
 
+Those only fire while Benji has focus. Pausing the mic also has a **global** shortcut,
+which works from inside a full-screen video call — where you actually need it:
+
+| Shortcut | Action |
+|----------|--------|
+| `⌃⌥⌘B` | Pause / resume the microphone (system-wide) |
+
 A menu-bar (tray) icon also provides: show window, history, live summary, and quit.
 
 ### What to expect
 
-- macOS prompts for microphone access on first launch — allow it
+- On first launch, a short assistant explains what Benji does, asks for microphone access, and downloads the model weights with a progress bar (~4 GB, once)
 - Subtitles appear at the bottom-center of the screen on a semi-transparent background
 - Words appear progressively as you speak; the text fades out after a period of silence
 
@@ -133,7 +145,10 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `STTConfig.stt_provider` | `"parakeet"` | `"parakeet"` (on this Mac) or `"remote"` (Benji cloud) |
-| `STTConfig.model` | `parakeet-tdt-0.6b-v3` | Local model weights |
+| `STTConfig.model` | `parakeet-tdt-0.6b-v3` | Local model weights (partial passes) |
+| `STTConfig.final_engine` | `"hybrid"` | Final pass: `"hybrid"` (Parakeet + Whisper rescue on language drift), `"whisper"` (always, slower, safest), `"parakeet"` (fastest, no language guarantee) |
+| `STTConfig.glossary` | `True` | Apply `glossary.txt` to the final text |
+| `STTConfig.auto_title` | `True` | Name a meeting from its first sentences via the local model |
 | `STTConfig.language` | `"fr"` | Target language; set to `None` for auto-detect, or `"en"`, etc. |
 | `STTConfig.diarization` | `False` | Enable speaker labels (`diarization_backend`: `"pitch"` or `"pyannote"`) |
 | `STTConfig.llm_correction` | `False` | Grammar/punctuation polish via MLX-LM (Apple Silicon) |
@@ -146,19 +161,13 @@ All settings live in `benji/config.py` (no env vars, no config files). Some comm
 | `UIConfig.font_size` | `28` | Subtitle font size |
 | `UIConfig.display_duration_ms` | `8000` | How long subtitles stay visible before fading |
 | `UIConfig.bottom_margin` | `80` | Distance from the bottom of the screen (px) |
+| `UIConfig.global_hotkey_pause` | `"Ctrl+Alt+Cmd+B"` | System-wide pause shortcut; `""` disables it |
 
-### Model selection logic
+### Where the weights live
 
-`STTConfig.model_size` is auto-selected at startup from your hardware:
-
-| Condition | Model |
-|-----------|-------|
-| CUDA GPU detected | `large-v3` |
-| ≥ 16 GB RAM | `medium` |
-| ≥ 8 GB RAM | `small` |
-| otherwise | `base` |
-
-All sizes are available (`tiny`, `base`, `small`, `medium`, `large-v3`). Override the auto-selection by setting `model_size` explicitly in `config.py`.
+Model weights are downloaded once into the Hugging Face cache
+(`~/.cache/huggingface/hub`); `~/.cache/benji` only holds the Silero VAD file. None of
+it is bundled in the app. Deleting either directory just triggers a re-download.
 
 ## How it works
 

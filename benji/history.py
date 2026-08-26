@@ -126,6 +126,23 @@ class TranscriptionHistory:
             return [e for e in self._iter_entries() if not e.get("meeting")]
         return [e for e in self._iter_entries() if e.get("meeting") == meeting_id]
 
+    def group_by_meeting(self) -> dict[str, list[dict]]:
+        """Toutes les entrées, indexées par réunion, **en une seule lecture**.
+
+        La fenêtre Réunions a besoin du contenu de chaque réunion à la fois (un
+        compteur par ligne, et désormais une recherche qui les traverse toutes).
+        Appeler `get_for_meeting()` en boucle relisait le fichier entier une fois
+        par réunion : à cinquante réunions, cinquante lectures complètes à chaque
+        rafraîchissement de la liste.
+
+        Les entrées antérieures à la notion de réunion sont regroupées sous
+        `meetings.LEGACY_ID`.
+        """
+        grouped: dict[str, list[dict]] = {}
+        for entry in self._iter_entries():
+            grouped.setdefault(entry.get("meeting") or meetings.LEGACY_ID, []).append(entry)
+        return grouped
+
     def has_legacy_entries(self) -> bool:
         return any(not e.get("meeting") for e in self._iter_entries())
 

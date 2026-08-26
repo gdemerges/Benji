@@ -104,8 +104,10 @@ class BenjiApplication:
         self.controller: WindowController | None = None
         self.summary_worker: SummaryWorker | None = None
         self.live_summarizer = None
+        self.meeting_titler = None
         self.tray = None
         self._shortcuts: list[QShortcut] = []  # garder les refs (sinon GC)
+        self.global_hotkeys = None
 
     # --- orchestration ---
 
@@ -115,6 +117,13 @@ class BenjiApplication:
         self._build_account()
         self._build_pipeline()
         self._create_qapp()
+
+        if not self._run_onboarding():
+            # L'utilisateur a fermé l'assistant : démarrer quand même donnerait
+            # une app sans micro ni modèle, qui ne transcrit rien et n'explique
+            # pas pourquoi. On sort avant d'ouvrir quoi que ce soit.
+            log.info("Premier lancement abandonné — arrêt.")
+            return 0
 
         splash = self._show_splash()
         try:
@@ -239,6 +248,26 @@ class BenjiApplication:
     def _create_qapp(self) -> None:
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Benji")
+
+    def _run_onboarding(self) -> bool:
+        """Assistant de premier lancement. False = l'utilisateur a renoncé.
+
+        Placé **après** `_create_qapp` (il faut Qt) et **avant** le splash : il
+        télécharge les poids que le splash attendrait sinon en silence, et pose
+        l'autorisation micro avant que la capture ne l'exige.
+
+        Le mode remote n'a ni modèle local ni assistant à montrer : la
+        transcription se fait côté backend.
+        """
+        from benji import onboarding
+
+        if self.remote_mode or not onboarding.needs_onboarding():
+            return True
+        from PyQt6.QtWidgets import QDialog
+
+        from benji.ui.onboarding_window import OnboardingWindow
+
+        return OnboardingWindow().exec() == QDialog.DialogCode.Accepted
 
     def _show_splash(self) -> SplashWindow:
         # Charge le modèle sur un thread de fond pour que l'UI reste réactive et
@@ -449,6 +478,20 @@ class BenjiApplication:
             )
             self.live_summarizer.start()
 
+        # Titre automatique de la réunion : le modèle local est déjà chargé pour
+        # la correction et le résumé, et « Réunion du 21/08 à 14:32 » ne dit rien
+        # de ce qu'on trouvera dedans. En mode remote, aucun modèle local n'est
+        # chargé — on n'en réveillerait un que pour ça.
+        if self.cfg.stt.auto_title and not self.remote_mode:
+            from benji.llm.titler import MeetingTitler
+
+            self.meeting_titler = MeetingTitler(
+                on_renamed=self.history_window.meeting_renamed.emit
+            )
+            self.meeting_titler.start()
+
+        self._install_global_hotkeys()
+
         self._add_shortcut("Ctrl+Shift+H", lambda: self._toggle(self.history_window))
         self._add_shortcut("Ctrl+Shift+S", lambda: self._toggle(self.live_summary_window))
         if IS_MACOS:
@@ -456,6 +499,41 @@ class BenjiApplication:
             self._add_shortcut(
                 "Ctrl+Shift+D",
                 lambda: self.overlay._apply_macos_window_settings(verbose=True),
+            )
+
+    def _install_global_hotkeys(self) -> None:
+        """Raccourcis actifs même quand Benji n'a pas le focus.
+
+        C'est le seul chemin praticable pour couper le micro en pleine visio :
+        les `QShortcut` ci-dessous sont posés sur l'overlay et ne répondent que
+        si Benji est au premier plan — jamais le cas quand Teams est en plein
+        écran, c'est-à-dire exactement quand on en a besoin.
+        """
+        if not self.cfg.ui.global_hotkey_pause:
+            return
+        from benji.hotkeys import GlobalHotkeys
+
+        self.global_hotkeys = GlobalHotkeys()
+        self.global_hotkeys.register(
+            self.cfg.ui.global_hotkey_pause, self._toggle_pause_notified
+        )
+
+    def _toggle_pause_notified(self) -> None:
+        """Bascule la pause et le **dit** — un raccourci global agit hors de la vue.
+
+        Depuis une visio en plein écran, l'utilisateur ne voit ni le tray ni la
+        fenêtre : sans notification, il ne saurait pas si sa frappe a porté, et
+        croire le micro coupé alors qu'il ne l'est pas est le pire des états.
+        """
+        paused = self.toggle_pause()
+        if self.tray is not None:
+            from PyQt6.QtWidgets import QSystemTrayIcon
+
+            self.tray.showMessage(
+                "Benji",
+                "Micro suspendu" if paused else "Micro rétabli",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
             )
 
     def _add_shortcut(self, keys: str, slot) -> None:
@@ -492,6 +570,10 @@ class BenjiApplication:
             self.bus.stop()
         if self.live_summarizer:
             self.live_summarizer.stop()
+        if self.meeting_titler is not None:
+            self.meeting_titler.stop()
+        if self.global_hotkeys is not None:
+            self.global_hotkeys.unregister_all()
         if self.capture is not None:
             self.capture.stop()
         # Ordre : micro, puis mixeur, puis capture système — on coupe la source

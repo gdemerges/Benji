@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from benji import export, meetings
+from benji import export, meetings, search
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.ui.style import (
@@ -54,7 +54,10 @@ from benji.ui.style import (
 from benji.ui.widgets.sheet import Sheet
 from benji.ui.widgets.transcript_view import TranscriptView
 
+# Le PDF n'est pas un format de plus : c'est le seul qui parte à quelqu'un qui
+# n'a pas Benji. Les trois autres se rouvrent dans un éditeur, celui-ci se lit.
 _EXPORT_FORMATS = [
+    ("Document (.pdf)", "pdf", "PDF (*.pdf)"),
     ("Texte (.txt)", "txt", "Fichier texte (*.txt)"),
     ("Markdown (.md)", "md", "Markdown (*.md)"),
     ("Sous-titres (.srt)", "srt", "SubRip (*.srt)"),
@@ -77,6 +80,9 @@ _MEETING_ID_ROLE = Qt.ItemDataRole.UserRole
 class HistoryWindow(QWidget):
     _summary_ready = pyqtSignal(str, str)  # (summary_text, file_path)
     _summary_error = pyqtSignal(str)
+    # Émis depuis un fil de fond (le titreur automatique). La connexion est
+    # queued : le rechargement a bien lieu sur le thread Qt.
+    meeting_renamed = pyqtSignal()
 
     def __init__(self, session_start: datetime = None, stats: SessionStats | None = None):
         super().__init__()
@@ -84,6 +90,9 @@ class HistoryWindow(QWidget):
         self.session_start = session_start or datetime.now()
         self.stats = stats
         self._entries: list[dict] = []
+        # Les entrées de la réunion avant filtrage par la recherche : le
+        # compteur « 3 résultats sur 128 » a besoin des deux.
+        self._all_entries: list[dict] = []
         self._speaker_names: dict[str, str] = {}
         # Réunion affichée. None tant qu'aucune n'existe (rien n'a été transcrit).
         self._meeting_id: str | None = None
@@ -118,6 +127,7 @@ class HistoryWindow(QWidget):
         self._stats_timer.start(2000)
         self._refresh_stats()
 
+        self.meeting_renamed.connect(self.reload_meetings)
         self._summary_ready.connect(self._on_summary_ready)
         self._summary_error.connect(self._on_summary_error)
 
@@ -135,6 +145,13 @@ class HistoryWindow(QWidget):
 
         self.sidebar_title = QLabel("Réunions")
 
+        # La recherche filtre la liste **et** le compte rendu : on ne cherche
+        # pas « une réunion », on cherche un moment dans une réunion.
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Rechercher…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._on_search_changed)
+
         self.meeting_list = QListWidget()
         self.meeting_list.setFrameShape(QListWidget.Shape.NoFrame)
         self.meeting_list.currentRowChanged.connect(self._on_meeting_changed)
@@ -146,6 +163,7 @@ class HistoryWindow(QWidget):
         layout.setContentsMargins(14, 16, 10, 12)
         layout.setSpacing(8)
         layout.addWidget(self.sidebar_title)
+        layout.addWidget(self.search)
         layout.addWidget(self.meeting_list, 1)
         layout.addWidget(self.new_meeting_btn)
         return self.sidebar
@@ -242,6 +260,7 @@ class HistoryWindow(QWidget):
             """
             + field_qss(t)
         )
+        self.search.setStyleSheet(field_qss(t))
         self.sidebar_title.setStyleSheet(
             f"font-family: {FONT_UI}; font-size: 11px; font-weight: 700; "
             f"letter-spacing: 1.1px; color: {_rgba(t.ink_faint)}; background: transparent;"
@@ -272,15 +291,25 @@ class HistoryWindow(QWidget):
         et exportables au lieu de devenir invisibles.
         """
         previous = self._meeting_id
+        query = self.search.text()
+        # Une seule lecture du fichier pour toute la liste : compter les échanges
+        # réunion par réunion le relisait autant de fois qu'il y a de réunions.
+        grouped = self.history.group_by_meeting()
         self._loading_meetings = True
         try:
             self.meeting_list.clear()
             for meeting in meetings.store().list():
-                count = len(self.history.get_for_meeting(meeting.id))
-                self._add_row(meeting.title, self._subtitle(meeting, count), meeting.id)
-            if self.history.has_legacy_entries():
-                count = len(self.history.get_for_meeting(meetings.LEGACY_ID))
-                self._add_row(meetings.LEGACY_TITLE, f"{count} échanges", meetings.LEGACY_ID)
+                entries = grouped.get(meeting.id, [])
+                if not search.meeting_matches(meeting.title, entries, query):
+                    continue
+                self._add_row(
+                    meeting.title, self._subtitle(meeting, len(entries)), meeting.id
+                )
+            legacy = grouped.get(meetings.LEGACY_ID, [])
+            if legacy and search.meeting_matches(meetings.LEGACY_TITLE, legacy, query):
+                self._add_row(
+                    meetings.LEGACY_TITLE, f"{len(legacy)} échanges", meetings.LEGACY_ID
+                )
         finally:
             self._loading_meetings = False
 
@@ -392,16 +421,35 @@ class HistoryWindow(QWidget):
             # identifiant — pas de récursion.
             self.reload_meetings()
             return
-        self._entries = (
+        all_entries = (
             [] if self._meeting_id is None
             else self.history.get_for_meeting(self._meeting_id)
         )
+        # Le compte rendu affiché est filtré par la recherche : on veut lire les
+        # passages trouvés, pas retrouver leur surlignage dans une heure de
+        # transcript. Les actions (copier, exporter, résumer) portent donc sur ce
+        # qui est **à l'écran** — ce que le compteur de résultats annonce.
+        self._all_entries = all_entries
+        self._entries = search.filter_entries(all_entries, self.search.text())
         self.title_label.setText(self._current_title() or "Aucune réunion")
         self.meta_label.setText(self._meta_text())
         self.transcript.set_entries(self._entries, self._speaker_names)
         self._refresh_export_enabled()
 
+    def _on_search_changed(self, _text: str) -> None:
+        """Refiltre la liste et le compte rendu à chaque frappe.
+
+        Bon marché parce que tout tient déjà en mémoire : une lecture du fichier
+        par rafraîchissement, pas une par réunion.
+        """
+        self.reload_meetings()
+
     def _meta_text(self) -> str:
+        if self.search.text().strip() and self._all_entries:
+            count = len(self._entries)
+            if not count:
+                return "Aucun résultat dans cette réunion."
+            return f"{count} résultat{'s' if count > 1 else ''} sur {len(self._all_entries)}"
         if not self._entries:
             return "Rien n'a encore été dit."
         meeting = self._current_meeting()
@@ -446,9 +494,17 @@ class HistoryWindow(QWidget):
         )
         if not path:
             return
-        content = export.render(self._entries, fmt, self._speaker_names)
         try:
-            Path(path).write_text(content, encoding="utf-8")
+            if fmt == "pdf":
+                # Le PDF est composé depuis le markdown : un seul rendu de
+                # référence, celui qu'on lit déjà à l'écran.
+                from benji.ui.pdf_export import write_pdf
+
+                markdown = export.render(self._entries, "md", self._speaker_names)
+                write_pdf(markdown, path, title=self._current_title())
+            else:
+                content = export.render(self._entries, fmt, self._speaker_names)
+                Path(path).write_text(content, encoding="utf-8")
         except OSError as e:
             QMessageBox.warning(self, "Benji", f"Export impossible : {e}")
 
