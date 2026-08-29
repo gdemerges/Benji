@@ -309,8 +309,8 @@ def test_hanging_diarizer_does_not_wedge_the_stt_loop(monkeypatch):
     t, _ = _make(monkeypatch, [[("bonjour", 0.0, 0.5)]])
     t.tagger = HangingTagger()
     monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
-    monkeypatch.setattr(t, "_await_speaker",
-                        lambda future, timeout=0.05: Transcriber._await_speaker(t, future, 0.05))
+    monkeypatch.setattr(t, "_await_spans",
+                        lambda future, timeout=0.05: Transcriber._await_spans(t, future, 0.05))
 
     try:
         t._run_segment(_audio(1.0), is_final=True)
@@ -456,3 +456,71 @@ class _FakeHistory:
 
     def add(self, text, speaker=None, meeting_id=None):
         self.added.append((text, speaker))
+
+
+def test_final_segment_splits_two_speakers_into_two_turns(monkeypatch):
+    """Un segment VAD qui tient deux locuteurs rend deux finals, pas une phrase.
+
+    C'est le cas des tours de parole rapprochés : sans pause franche, le VAD ne
+    coupe pas, et une étiquette unique par segment fondait les deux voix.
+    """
+    t, _ = _make(monkeypatch, [[
+        ("je", 0.0, 0.3), ("pense", 0.3, 0.8), ("que", 0.8, 1.1), ("oui", 1.1, 1.4),
+        ("moi", 1.7, 2.0), ("non", 2.0, 2.3), ("pas", 2.3, 2.6), ("tout", 2.6, 3.0),
+    ]])
+    saved: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(t.history, "add",
+                        lambda text, speaker=None: saved.append((text, speaker)))
+
+    labels = iter(["A", "A", "B"])
+
+    class WindowTagger:
+        def label(self, audio, sr):
+            return next(labels, "B")
+
+    t.tagger = WindowTagger()
+
+    t._run_segment(_audio(3.0), is_final=True)
+
+    finals = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"]
+    assert [f["speaker"] for f in finals] == ["A", "B"]
+    assert finals[0]["text"] == "Je pense que oui"
+    assert finals[1]["text"] == "Moi non pas tout"
+    # L'historique porte deux entrées distinctes, une par locuteur.
+    assert saved == [("Je pense que oui", "A"), ("Moi non pas tout", "B")]
+
+
+def test_single_speaker_segment_still_emits_one_final(monkeypatch):
+    """Le cas courant ne paie rien : une voix, un tour, un seul final."""
+    t, _ = _make(monkeypatch, [[
+        ("bonjour", 0.0, 0.5), ("tout", 0.5, 0.9), ("le", 0.9, 1.1),
+        ("monde", 1.1, 1.6), ("ça", 1.8, 2.0), ("va", 2.0, 2.4),
+    ]])
+    monkeypatch.setattr(t.history, "add", lambda text, speaker=None: None)
+    t.tagger = type("T", (), {"label": lambda self, a, sr: "A"})()
+
+    t._run_segment(_audio(2.5), is_final=True)
+
+    finals = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"]
+    assert len(finals) == 1
+    assert finals[0]["speaker"] == "A"
+
+
+def test_hallucinated_turn_is_dropped_without_taking_the_other_with_it(monkeypatch):
+    """Une hallucination localisée n'emporte que son tour."""
+    t, _ = _make(monkeypatch, [[
+        ("Merci", 0.0, 0.4), ("d'avoir", 0.4, 0.8), ("regardé", 0.8, 1.2),
+        ("on", 1.8, 2.0), ("reprend", 2.0, 2.5), ("lundi", 2.5, 3.0),
+    ]])
+    saved: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(t.history, "add",
+                        lambda text, speaker=None: saved.append((text, speaker)))
+
+    labels = iter(["A", "A", "B"])
+    t.tagger = type("T", (), {"label": lambda self, a, sr: next(labels, "B")})()
+
+    t._run_segment(_audio(3.0), is_final=True)
+
+    finals = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"]
+    assert [f["text"] for f in finals] == ["On reprend lundi"]
+    assert saved == [("On reprend lundi", "B")]

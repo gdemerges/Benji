@@ -83,6 +83,16 @@ class STTConfig:
     # requires `uv sync --extra diarization` and HF token via env HF_TOKEN).
     diarization_backend: str = "pyannote"
     diarization_max_speakers: int = 4  # Cap for pyannote clustering (pitch is hard-capped at 2)
+    # Découpe d'un segment en tours de parole (cf. stt/diarization.py). Un segment
+    # VAD tient souvent deux locuteurs qui s'enchaînent sans pause franche : on
+    # étiquette par fenêtres glissantes, puis on recoupe les mots (horodatés) aux
+    # frontières. Fenêtre : assez longue pour un embedding stable (pyannote rend
+    # None sous 500 ms), assez courte pour serrer une frontière.
+    diarization_window_s: float = 1.5
+    diarization_hop_s: float = 0.75  # 0 = pas de découpe, une étiquette par segment
+    # Un tour plus court que ça est refondu dans son voisin : une fenêtre isolée
+    # qui change d'avis au milieu d'une phrase ferait du confetti à l'écran.
+    diarization_min_turn_words: int = 2
     llm_correction: bool = False  # Post-hoc grammar/punctuation fix via MLX-LM
     live_summary_interval_s: int = 0  # 0 = disabled; e.g. 300 = every 5 min
     # Nomme la réunion en cours à partir de ses premières phrases, via le modèle

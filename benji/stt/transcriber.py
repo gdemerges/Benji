@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 from benji.history import TranscriptionHistory
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend, build_final_backend
-from benji.stt.diarization import build_tagger
+from benji.stt.diarization import build_tagger, label_windows, split_by_speaker
 from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
 from benji.stt.postprocessing import is_hallucination, postprocess_text
 
@@ -208,7 +208,7 @@ class Transcriber:
         speaker_future = None
         if self.tagger is not None:
             speaker_future = self._ensure_diarizer_pool().submit(
-                self._label_speaker, audio, self.sample_rate
+                self._label_spans, audio, self.sample_rate
             )
 
         self.display_queue.put({"type": "segment_start"})
@@ -228,40 +228,57 @@ class Transcriber:
             self._reset_partial_state()
             return
 
-        full_text = postprocess_text(
-            " ".join(w["text"] for w in words), language=self.config.language
+        # Étiquettes de locuteur (best-effort), fenêtre par fenêtre. Un segment
+        # VAD n'est pas un tour de parole : quand deux personnes s'enchaînent
+        # sans vraie pause, elles tiennent dans le même tampon. On recoupe donc
+        # les mots aux frontières de locuteur plutôt que de fondre les deux voix
+        # dans une phrase unique. Cas courant : une seule étendue, un seul tour,
+        # exactement le chemin d'avant.
+        turns = split_by_speaker(
+            words,
+            self._await_spans(speaker_future),
+            self.config.diarization_min_turn_words,
         )
-        # Glossaire : seulement sur le final. Le partiel est jeté de toute façon,
-        # et voir un mot se réécrire sous les yeux est plus déroutant qu'une
-        # coquille passagère.
-        full_text = apply_lexicon(full_text, self._lexicon)
-        if is_hallucination(full_text):
-            if speaker_future is not None:
-                speaker_future.cancel()
+
+        # Chaque tour est post-traité pour lui-même : la ponctuation et le
+        # glossaire n'ont pas à voir la phrase de l'autre, et une hallucination
+        # localisée ne doit emporter que son tour.
+        finals: list[tuple[str | None, str]] = []
+        for speaker, turn_words in turns:
+            text = postprocess_text(
+                " ".join(w["text"] for w in turn_words), language=self.config.language
+            )
+            # Glossaire : seulement sur le final. Le partiel est jeté de toute façon,
+            # et voir un mot se réécrire sous les yeux est plus déroutant qu'une
+            # coquille passagère.
+            text = apply_lexicon(text, self._lexicon)
+            if text and not is_hallucination(text):
+                finals.append((speaker, text))
+
+        if not finals:
             # Tell the overlay to drop the streamed (hallucinated) words instead
             # of leaving them on screen.
             self.display_queue.put({"type": "final_text", "text": "", "drop": True})
             self._reset_partial_state()
             return
 
-        # Étiquette de locuteur (best-effort). Champ structuré, jamais collé dans
-        # le texte, pour que l'UI puisse le colorer par locuteur.
-        speaker = self._await_speaker(speaker_future)
-
-        if self.config.llm_correction:
-            # Show the raw transcription immediately, then correct it off-thread
-            # and emit a replacement once ready — the STT loop never blocks on the
-            # LLM. History is written by the corrector (stores the corrected text).
-            self._segment_seq += 1
-            self._emit_final(full_text, speaker, seq=self._segment_seq)
-            self._enqueue_correction(full_text, speaker, self._segment_seq)
-        else:
-            # Replace the streamed (raw) overlay text with the post-processed one.
-            self._emit_final(full_text, speaker)
-            # DEBUG et pas INFO : le log est persisté sur disque et joint aux
-            # rapports de bug — le contenu transcrit ne doit pas y fuiter.
-            log.debug('%s"%s"', f"[{speaker}] " if speaker else "", full_text)
-            self.history.add(full_text, speaker=speaker)
+        for speaker, text in finals:
+            # L'étiquette voyage comme champ structuré, jamais collée dans le
+            # texte, pour que l'UI puisse la colorer par locuteur.
+            if self.config.llm_correction:
+                # Show the raw transcription immediately, then correct it off-thread
+                # and emit a replacement once ready — the STT loop never blocks on the
+                # LLM. History is written by the corrector (stores the corrected text).
+                self._segment_seq += 1
+                self._emit_final(text, speaker, seq=self._segment_seq)
+                self._enqueue_correction(text, speaker, self._segment_seq)
+            else:
+                # Replace the streamed (raw) overlay text with the post-processed one.
+                self._emit_final(text, speaker)
+                # DEBUG et pas INFO : le log est persisté sur disque et joint aux
+                # rapports de bug — le contenu transcrit ne doit pas y fuiter.
+                log.debug('%s"%s"', f"[{speaker}] " if speaker else "", text)
+                self.history.add(text, speaker=speaker)
 
         # Stats
         if self.stats is not None:
@@ -284,28 +301,37 @@ class Transcriber:
             )
         return self._diarizer_pool
 
-    def _label_speaker(self, audio, sample_rate: int):
-        """Étiquette de locuteur, best-effort : jamais fatale pour le segment."""
+    def _label_spans(self, audio, sample_rate: int) -> list:
+        """Étendues de locuteur du tampon, best-effort : jamais fatales.
+
+        Le coût est celui d'un embedding par fenêtre au lieu d'un par segment,
+        payé sur le pool de diarisation pendant que le décodage tourne — donc
+        absorbé, tant qu'il reste sous la durée du décodage final.
+        """
         try:
-            return self.tagger.label(audio, sample_rate)
+            return label_windows(
+                self.tagger, audio, sample_rate,
+                window_s=self.config.diarization_window_s,
+                hop_s=self.config.diarization_hop_s,
+            )
         except Exception as e:
             log.warning("Diarisation ignorée : %s", e)
-            return None
+            return []
 
-    def _await_speaker(self, future, timeout: float = 5.0):
-        """Récupère l'étiquette calculée en parallèle du décodage.
+    def _await_spans(self, future, timeout: float = 5.0) -> list:
+        """Récupère les étendues calculées en parallèle du décodage.
 
         Le timeout est un garde-fou : un tagger bloqué (modèle qui télécharge,
         backend gelé) ne doit pas figer la boucle STT — on rend le segment sans
         locuteur plutôt que d'arrêter la transcription.
         """
         if future is None:
-            return None
+            return []
         try:
-            return future.result(timeout=timeout)
+            return future.result(timeout=timeout) or []
         except Exception as e:
             log.warning("Diarisation abandonnée (%s) — segment sans locuteur", e)
-            return None
+            return []
 
     def _emit_final(self, text: str, speaker: str | None, *, seq: int | None = None,
                     corrected: bool = False) -> None:

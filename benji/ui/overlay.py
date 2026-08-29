@@ -92,11 +92,12 @@ class SubtitleOverlay(QWidget):
         self.setWindowTitle("BenjiOverlay")
         self.config = config or UIConfig()
         self.current_text = []  # For streaming mode
+        # Finals de l'énoncé courant, une entrée par tour de parole : un segment
+        # VAD peut en tenir plusieurs (cf. stt/diarization.py). Les remplacer les
+        # uns par les autres n'afficherait que le dernier locuteur.
+        self._final_lines: list[dict] = []
         self._shutting_down = False  # Flag to prevent operations during shutdown
         self._current_screen = None  # Screen the overlay is currently anchored to
-        # Seq of the on-screen final segment awaiting an async LLM correction.
-        # A late correction only replaces the text if this still matches.
-        self._pending_correction_seq = None
 
         # Window flags (cross-platform)
         self.setWindowFlags(
@@ -443,6 +444,30 @@ class SubtitleOverlay(QWidget):
             if not self._shutting_down:
                 log.exception("Error in _update_text")
 
+    def _render_final_lines(self) -> None:
+        """Affiche les tours de parole de l'énoncé, un par ligne.
+
+        Le nom du locuteur est coloré et le corps échappé : une transcription
+        contenant `<`, `&` ou `>` ne doit pas être interprétée comme du balisage.
+        """
+        from html import escape
+
+        parts = []
+        for line in self._final_lines:
+            body = escape(line["text"])
+            speaker = line.get("speaker")
+            if speaker:
+                # L'overlay est toujours sur fond noir : variante claire.
+                c = speaker_color(speaker, on_dark=True)
+                parts.append(
+                    f'<span style="color:{c.name()};font-weight:bold;">'
+                    f"{escape(speaker)}</span> {body}"
+                )
+            else:
+                parts.append(body)
+        self.label.setTextFormat(Qt.TextFormat.RichText)
+        self.label.setText("<br>".join(parts))
+
     @pyqtSlot(dict)
     def _update_word(self, message: dict):
         """Streaming mode: add words progressively."""
@@ -454,9 +479,9 @@ class SubtitleOverlay(QWidget):
             if msg_type == "segment_start":
                 # Reset internal buffer but keep label visible until first word arrives
                 self.current_text = []
-                # A new utterance is starting: any late async correction for the
-                # previous final no longer applies to what's on screen.
-                self._pending_correction_seq = None
+                # Un nouvel énoncé commence : une correction LLM tardive pour
+                # le final précédent ne s'applique plus à ce qui est à l'écran.
+                self._final_lines = []
                 # Between utterances (faded out), re-evaluate which screen is
                 # active so subtitles follow the user to another monitor.
                 if self.windowOpacity() == 0.0 or not self.isVisible():
@@ -479,37 +504,30 @@ class SubtitleOverlay(QWidget):
                 # clear the overlay immediately instead of leaving garbage on screen.
                 if message.get("drop"):
                     self.current_text = []
+                    self._final_lines = []
                     self.label.setText("")
                     self.fade_anim.stop()
                     self.setWindowOpacity(0.0)
-                    self._pending_correction_seq = None
                     return
                 seq = message.get("seq")
-                if message.get("corrected"):
-                    # Async LLM correction: only replace if this segment is still
-                    # the one displayed (no newer utterance has started since).
-                    if seq is None or seq != self._pending_correction_seq:
-                        return
-                else:
-                    # Fresh final: remember it so its correction can replace it.
-                    self._pending_correction_seq = seq
                 text = message.get("text") or ""
-                self.current_text = text.split() if text else []
-                speaker = message.get("speaker")
-                if speaker:
-                    # Colored speaker prefix; escape the body so stray <,&,> in the
-                    # transcription aren't interpreted as markup.
-                    from html import escape
-                    # L'overlay est toujours sur fond noir : variante claire.
-                    c = speaker_color(speaker, on_dark=True)
-                    self.label.setTextFormat(Qt.TextFormat.RichText)
-                    self.label.setText(
-                        f'<span style="color:{c.name()};font-weight:bold;">{escape(speaker)}</span> '
-                        f"{escape(text)}"
-                    )
+                if message.get("corrected"):
+                    # Async LLM correction: only replace if that segment is still
+                    # on screen (no newer utterance has started since).
+                    line = next((l for l in self._final_lines
+                                 if seq is not None and l["seq"] == seq), None)
+                    if line is None:
+                        return
+                    line["text"] = text
                 else:
-                    self.label.setTextFormat(Qt.TextFormat.PlainText)
-                    self.label.setText(text)
+                    # Tour de parole suivant du même énoncé : on l'ajoute sous le
+                    # précédent au lieu de l'écraser — sinon la réplique de l'un
+                    # effacerait celle de l'autre en une fraction de seconde.
+                    self.current_text = []
+                    self._final_lines.append(
+                        {"text": text, "speaker": message.get("speaker"), "seq": seq}
+                    )
+                self._render_final_lines()
                 self._reposition()
                 self.fade_anim.stop()
                 self.setWindowOpacity(1.0)

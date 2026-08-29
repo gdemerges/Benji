@@ -47,8 +47,35 @@
 
   **Sous-mots** : Parakeet rend des morceaux de mots (`" c"`, `"ô"`, `"té"`), recollés par `group_tokens_into_words()` — **par phrase** (`words_from_result`), sinon la fin d'une phrase se colle au début de la suivante (« Apple.Ça »).
 
-- `transcriber.py` — consomme `transcribe_queue`, stream les mots vers `display_queue`. Chaque passe partielle re-décode le tampon **entier** via Parakeet (~123 ms pour 8 s) et fige le préfixe sur lequel deux passes successives s'accordent (LocalAgreement-2) ; le figeage est **monotone**, un mot affiché n'est jamais repris. La passe finale passe par le moteur hybride : c'est ce texte-là qui est conservé, puis relu par le glossaire (`lexicon.py`). Si `llm_correction` est activé, le texte brut est affiché immédiatement puis corrigé sur un thread dédié (`STT-corrector`) : chaque final porte un `seq` que l'overlay utilise pour remplacer le bon segment (et ignorer une correction dont le segment n'est plus à l'écran).
-- `diarization.py` — labellisation de locuteurs (activée par défaut). Le tagger ne dépend que de l'audio : il tourne **en parallèle** de la passe finale (pool à un worker, `_await_speaker` avec timeout) au lieu d'ajouter son coût au délai d'affichage. Un tagger bloqué rend un segment sans locuteur, jamais un thread STT figé. Backend `pyannote` (embeddings, N locuteurs, modèle HF **gated** → accepter les conditions sur hf.co/pyannote/embedding) avec fallback automatique sur `pitch` (F0, A/B) si indisponible. Le label voyage comme champ `speaker` dans le message `final_text` (jamais collé au texte) — la couleur par locuteur vient de `benji.ui.style.speaker_color`.
+- `transcriber.py` — consomme `transcribe_queue`, stream les mots vers `display_queue`. Chaque passe partielle re-décode le tampon **entier** via Parakeet (~123 ms pour 8 s) et fige le préfixe sur lequel deux passes successives s'accordent (LocalAgreement-2) ; le figeage est **monotone**, un mot affiché n'est jamais repris. La passe finale passe par le moteur hybride : c'est ce texte-là qui est conservé, puis relu par le glossaire (`lexicon.py`). Si `llm_correction` est activé, le texte brut est affiché immédiatement puis corrigé sur un thread dédié (`STT-corrector`) : chaque final porte un `seq` que l'overlay utilise pour remplacer la bonne ligne (et ignorer une correction dont le segment n'est plus à l'écran). Un segment peut rendre **plusieurs** finals — un par tour de parole, cf. `diarization.py`.
+- `diarization.py` — labellisation de locuteurs (activée par défaut). Le tagger ne dépend que de l'audio : il tourne **en parallèle** de la passe finale (pool à un worker, `_await_spans` avec timeout) au lieu d'ajouter son coût au délai d'affichage. Un tagger bloqué rend un segment sans locuteur, jamais un thread STT figé. Backend `pyannote` (embeddings, N locuteurs, modèle HF **gated** → accepter les conditions sur hf.co/pyannote/embedding) avec fallback automatique sur `pitch` (F0, A/B) si indisponible. Le label voyage comme champ `speaker` dans le message `final_text` (jamais collé au texte) — la couleur par locuteur vient de `benji.ui.style.speaker_color`.
+
+  **Un segment VAD n'est pas un tour de parole.** Avec `silence_duration_ms = 600`,
+  deux personnes qui s'enchaînent sans pause franche tiennent dans le même
+  tampon : une étiquette unique fondait les deux voix en une phrase, d'une seule
+  couleur. On étiquette donc **par fenêtres glissantes** (`label_windows`, 1,5 s
+  / pas 0,75 s) et on recoupe les mots — qui sont horodatés — aux frontières
+  (`split_by_speaker`, **pure**). Le segment rend alors *N* `final_text`, un par
+  tour, chacun avec son locuteur, son post-traitement et son entrée d'historique.
+
+  Trois garde-fous, parce que le clustering se trompe : les fenêtres se
+  recouvrent, donc la frontière est floue à un demi-pas près → on la **recale sur
+  le silence** le plus proche (`_snap_to_pauses` : on se relaie dans un blanc),
+  mais seulement s'il y a un vrai blanc, sinon bouger serait décider au hasard ;
+  un tour plus court que `diarization_min_turn_words` est **refondu** dans son
+  voisin, sinon une fenêtre isolée qui change d'avis ferait du confetti ; une
+  fenêtre sans étiquette (trop courte, inférence en échec) est **ignorée** plutôt
+  que d'ouvrir un tour anonyme au milieu de la phrase. `diarization_hop_s = 0`
+  revient à une étiquette par segment.
+
+  Coût : un embedding par fenêtre au lieu d'un par segment, toujours sur le pool
+  de diarisation pendant que le décodage tourne — absorbé tant qu'il reste sous
+  la durée du final. Une voix unique ne paie rien : un seul tour, le chemin d'avant.
+
+  **La parole vraiment simultanée reste hors de portée** : sur un signal mélangé,
+  le moteur STT lui-même n'entrelace qu'une transcription. Aucun ré-étiquetage a
+  posteriori ne le rattrape ; il faudrait de la séparation de sources. Ne pas
+  espérer que la découpe en tours règle ce cas-là.
 - `language.py` — **pur**. Détection de dérive de langue par mots-outils (pas par
   vocabulaire : une réunion française truffée d'anglicismes métier garde ses
   « le », « du », « sur »). Conservateur par construction — il faut au moins deux
