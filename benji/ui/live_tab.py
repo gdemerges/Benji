@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from benji.stt.postprocessing import join_words
 from benji.ui.style import FONT_UI, current_theme
 from benji.ui.widgets.chat_item import ChatItem
 from benji.ui.widgets.partial_bubble import PartialBubble
@@ -165,12 +166,18 @@ class LiveTab(QWidget):
         elif msg_type == "segment_start":
             self._partial_text = ""
             self.partial.set_text("")
+        elif msg_type == "partial":
+            # Une passe entière en un message (cf. stt/transcriber.py) : on
+            # remplace la ligne vivante d'un coup au lieu de la recomposer mot
+            # à mot, chacun repeignant la bulle.
+            self._partial_text = join_words(w.get("text", "") for w in item.get("words", []))
+            self.partial.set_text(self._partial_text)
         elif msg_type == "word":
+            # Mot à mot : chemin du mode remote (cf. stt/remote.py).
             text = item.get("text", "")
             if not text:
                 return
-            sep = "" if (not self._partial_text or self._partial_text.endswith(" ") or text.startswith((".", ",", "!", "?", ";", ":"))) else " "
-            self._partial_text = (self._partial_text + sep + text).strip()
+            self._partial_text = join_words([self._partial_text, text])
             self.partial.set_text(self._partial_text)
         elif msg_type == "final_text":
             text = item.get("text", "")

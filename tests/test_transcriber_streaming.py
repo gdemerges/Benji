@@ -54,6 +54,12 @@ def _make(monkeypatch, scripts, **cfg) -> tuple[Transcriber, FakeBackend]:
     return t, backend
 
 
+def _partial_words(q: Queue) -> list[str]:
+    """Mots du dernier instantané partiel publié (un message par passe)."""
+    snapshots = [e for e in _drain(q) if e.get("type") == "partial"]
+    return [w["text"] for w in snapshots[-1]["words"]] if snapshots else []
+
+
 def _drain(q: Queue) -> list[dict]:
     out = []
     while not q.empty():
@@ -164,9 +170,9 @@ def test_laffichage_montre_le_fige_puis_lhypothese(monkeypatch):
     t._run_partial(_audio(0.6))
     t._run_partial(_audio(1.0))
 
-    words = [e["text"] for e in _drain(t.display_queue) if e.get("type") == "word"]
-    # Dernier instantané : les deux mots figés suivis de l'hypothèse courante.
-    assert words[-3:] == ["bonjour", "le", "monde"]
+    # Dernier instantané : les deux mots figés suivis de l'hypothèse courante,
+    # publiés en **un seul** message (cf. la note de _run_partial).
+    assert _partial_words(t.display_queue) == ["bonjour", "le", "monde"]
 
 
 def test_final_segment_postprocesses_and_resets(monkeypatch):
@@ -407,8 +413,7 @@ def test_le_glossaire_ne_touche_pas_les_partielles(monkeypatch):
 
     t._run_partial(_audio(0.6))
 
-    words = [m["text"] for m in _drain(t.display_queue) if m["type"] == "word"]
-    assert words == ["kubernétesse"]
+    assert _partial_words(t.display_queue) == ["kubernétesse"]
 
 
 def test_glossaire_desactive_ne_lit_pas_le_disque(monkeypatch):
@@ -524,3 +529,39 @@ def test_hallucinated_turn_is_dropped_without_taking_the_other_with_it(monkeypat
     finals = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"]
     assert [f["text"] for f in finals] == ["On reprend lundi"]
     assert saved == [("On reprend lundi", "B")]
+
+
+def test_une_passe_partielle_publie_un_seul_message(monkeypatch):
+    """`display_queue` est bornée et les `put` sont bloquants.
+
+    Publier mot à mot faisait attendre le thread STT sur le tick de 16 ms de
+    `DisplayBus` — 53 ms mesurés sur 37 mots, pour une passe qui n'en coûte que
+    150 de décodage — et déclenchait un relayout de l'overlay par mot.
+    """
+    mots = [(f"mot{i}", i * 0.1, i * 0.1 + 0.1) for i in range(37)]
+    t, _ = _make(monkeypatch, [mots])
+
+    t._run_partial(_audio(4.0))
+
+    events = _drain(t.display_queue)
+    assert [e["type"] for e in events] == ["segment_start", "partial"]
+    assert len(events[1]["words"]) == 37
+
+
+def test_segment_start_annonce_un_nouvel_enonce_pas_un_rafraichissement(monkeypatch):
+    """C'est lui qui périme les corrections tardives et vide la pile de tours.
+
+    Émis à chaque passe, il remettait l'overlay à zéro en plein énoncé — sans
+    conséquence tant qu'un redessin complet suivait, faux dès qu'on ne publie
+    plus qu'un delta.
+    """
+    t, _ = _make(monkeypatch, [
+        [("bonjour", 0.0, 0.4)],
+        [("bonjour", 0.0, 0.4), ("monde", 0.4, 0.8)],
+    ])
+
+    t._run_partial(_audio(0.6))
+    t._run_partial(_audio(1.0))
+
+    starts = [e for e in _drain(t.display_queue) if e["type"] == "segment_start"]
+    assert len(starts) == 1

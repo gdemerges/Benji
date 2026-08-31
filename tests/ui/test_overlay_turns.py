@@ -90,3 +90,60 @@ def test_drop_clears_every_turn(qtbot):
 
     assert w.label.text() == ""
     assert w._final_lines == []
+
+
+def test_une_pile_de_tours_ne_deborde_pas_du_plafond(qtbot):
+    """La fenêtre est plafonnée à 40 % de l'écran et le label ne défile pas.
+
+    Au-delà, le texte était coupé en silence : 820 px voulus pour 320
+    disponibles sur six tours empilés, et la réplique de quelqu'un disparaissait
+    sans que rien ne le signale.
+    """
+    w = _overlay(qtbot)
+    long_turn = "Une replique de reunion assez longue pour occuper plusieurs lignes " * 3
+    w._update_word({"type": "segment_start"})
+    for i in range(6):
+        w._update_word(_final(f"[{i}] " + long_turn, f"S{i % 3}"))
+
+    budget = w.maximumHeight()
+    assert w.label.sizeHint().height() <= budget
+    # Le tour le plus récent est celui qu'on lit : c'est lui qui reste.
+    assert "[5]" in w.label.text()
+
+
+def test_un_tour_unique_trop_long_montre_sa_fin(qtbot):
+    """On ne peut pas retirer le seul tour présent : on rogne son début."""
+    w = _overlay(qtbot)
+    w._update_word({"type": "segment_start"})
+    w._update_word(_final("DEBUT " + "mot " * 400 + "FIN", "A"))
+
+    assert w.label.sizeHint().height() <= w.maximumHeight()
+    assert "FIN" in w.label.text()
+    assert "…" in w.label.text()
+    # Le texte complet reste intact : une correction tardive vise le vrai texte.
+    assert w._final_lines[0]["text"].startswith("DEBUT")
+
+
+def test_une_passe_partielle_est_peinte_en_une_fois(qtbot):
+    """Le moteur local publie une passe entière par message.
+
+    Peindre mot à mot coûtait un `setText` + `adjustSize` + `move` par mot —
+    10 ms mesurés pour 37 mots — sur un état que personne n'a le temps de lire.
+    """
+    w = _overlay(qtbot)
+    w._update_word({"type": "segment_start"})
+    w._update_word({"type": "partial", "words": [
+        {"text": "bonjour"}, {"text": "le"}, {"text": "monde"}, {"text": "."},
+    ]})
+
+    assert w.label.text() == "bonjour le monde."  # ponctuation recollée
+
+
+def test_le_mode_remote_reste_servi_mot_a_mot(qtbot):
+    """Les events du backend arrivent réellement un par un (cf. stt/remote.py)."""
+    w = _overlay(qtbot)
+    w._update_word({"type": "segment_start"})
+    for mot in ("bonjour", "le", "monde"):
+        w._update_word({"type": "word", "text": mot})
+
+    assert w.label.text() == "bonjour le monde"

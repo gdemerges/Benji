@@ -173,6 +173,13 @@ class Transcriber:
         if not words:
             return
 
+        # `segment_start` annonce un **nouvel énoncé**, pas un rafraîchissement :
+        # c'est lui qui périme les corrections LLM tardives et remet à zéro la
+        # pile de tours de parole de l'overlay. Le répéter à chaque passe (ce que
+        # faisait le rendu mot à mot) n'avait de sens que parce qu'il précédait
+        # un redessin complet.
+        first_pass = not self._prev_words_norm and not self._committed_words
+
         norm = [self._norm(w["text"]) for w in words]
         agreed = self._common_prefix_len(norm, self._prev_words_norm)
         if agreed > len(self._committed_words):
@@ -180,12 +187,24 @@ class Transcriber:
         self._prev_words_norm = norm
 
         # Redessine l'instantané : préfixe acquis, puis meilleure hypothèse.
-        self.display_queue.put({"type": "segment_start"})
-        for w in self._committed_words + words[len(self._committed_words):]:
-            self.display_queue.put({
-                "type": "word", "text": w["text"],
-                "start": w.get("start"), "end": w.get("end"),
-            })
+        #
+        # **Un seul message par passe, pas un par mot.** `display_queue` est
+        # bornée (10) et les `put` sont bloquants : publier mot à mot faisait
+        # attendre le thread STT sur le tick de 16 ms de `DisplayBus` — 35 ms
+        # mesurés sur 20 mots, 53 sur 37, sur une passe qui n'en coûte que 150 de
+        # décodage. Côté Qt, chaque mot déclenchait un `setText` + `adjustSize` +
+        # `move` de l'overlay, soit ~10 ms de mise en page pour un état
+        # intermédiaire que personne n'a le temps de lire. Le consommateur
+        # réaffiche de toute façon la phrase entière : un message suffit.
+        if first_pass:
+            self.display_queue.put({"type": "segment_start"})
+        self.display_queue.put({
+            "type": "partial",
+            "words": [
+                {"text": w["text"], "start": w.get("start"), "end": w.get("end")}
+                for w in self._committed_words + words[len(self._committed_words):]
+            ],
+        })
 
         if self.stats is not None:
             latency_ms = (time.monotonic() - start_t) * 1000
@@ -212,14 +231,17 @@ class Transcriber:
             )
 
         self.display_queue.put({"type": "segment_start"})
-        words: list[dict] = []
-        for word in self.final_backend.transcribe(audio):
-            words.append(word)
+        words = list(self.final_backend.transcribe(audio))
+        if words:
+            # Le moteur hybride ne streame pas (il faut tout le texte pour juger
+            # de sa langue) : il n'y a rien à égrener, et les mots sont déjà à
+            # l'écran, posés par les partielles.
             self.display_queue.put({
-                "type": "word",
-                "text": word["text"],
-                "start": word.get("start"),
-                "end": word.get("end"),
+                "type": "partial",
+                "words": [
+                    {"text": w["text"], "start": w.get("start"), "end": w.get("end")}
+                    for w in words
+                ],
             })
 
         if not words:

@@ -37,6 +37,7 @@ from benji.config import (
 from benji.launch_mode import launch_mode
 from benji.llm.providers import build_summary_provider
 from benji.llm.summary_worker import SummaryWorker
+from benji.queues import NotifyingQueue
 from benji.stats import SessionStats
 from benji.stt.transcriber import Transcriber
 from benji.ui.display_bus import DisplayBus
@@ -184,7 +185,8 @@ class BenjiApplication:
 
         self.audio_queue = Queue(maxsize=100)
         self.transcribe_queue = Queue(maxsize=3)
-        self.display_queue = Queue(maxsize=10)
+        # Prévient le bus d'affichage au lieu d'être sondée (cf. benji/queues.py).
+        self.display_queue = NotifyingQueue(maxsize=10)
 
         # Audio système : le micro alimente le mixeur, qui publie le mélange
         # dans audio_queue. Désactivé (ou boucle indisponible), le micro écrit

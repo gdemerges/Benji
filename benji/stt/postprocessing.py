@@ -123,3 +123,24 @@ def format_for_display(text: str) -> str:
     text = text.strip()
 
     return text
+
+
+def join_words(texts) -> str:
+    """Recolle des mots en une phrase affichable.
+
+    Le moteur rend la ponctuation comme un mot à part (`"."`, `","`) : la coller
+    au mot précédent évite le « bonjour , monde » qu'un simple `" ".join`
+    produisait dans l'overlay. Pure — c'est du rendu, pas du post-traitement de
+    la passe finale.
+    """
+    out = ""
+    for text in texts:
+        if not text:
+            continue
+        sep = (
+            ""
+            if not out or out.endswith(" ") or text.startswith((".", ",", "!", "?", ";", ":", "'", "’"))
+            else " "
+        )
+        out = out + sep + text
+    return out.strip()

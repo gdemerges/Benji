@@ -19,12 +19,18 @@ from PyQt6.QtWidgets import (
 )
 
 from benji.config import IS_MACOS, IS_WINDOWS, UIConfig
+from benji.stt.postprocessing import join_words
 from benji.ui.style import speaker_color
 from benji.ui.widgets.waveform import WaveformDot
 
 log = logging.getLogger(__name__)
 
 _space_observer_cls = None
+
+# Hauteur non textuelle de l'overlay : marges du layout, rangée de l'indicateur
+# VAD et padding du label. Retranchée du plafond de la fenêtre pour savoir ce
+# qui reste au texte.
+_CHROME_HEIGHT = 60
 
 
 def _space_observer_class():
@@ -147,6 +153,8 @@ class SubtitleOverlay(QWidget):
         # Opacity animation for fade
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
         self.fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        # Fondu terminé = plus rien à l'écran : la garde de fenêtre se désarme.
+        self.fade_anim.finished.connect(self._disarm_window_guard)
 
         # Subscribe to display bus events
         bus.event.connect(self._dispatch_event)
@@ -382,11 +390,15 @@ class SubtitleOverlay(QWidget):
                     None,
                 )
 
-                # Fallback: gentle re-apply in case a notification is missed
-                # (private window tags can reset outside of Space changes too).
+                # Filet de sécurité si une notification est manquée (les tags
+                # privés peuvent aussi se réinitialiser hors changement d'Espace).
+                # **Armé seulement quand des sous-titres sont à l'écran** : c'est
+                # le seul moment où le niveau de fenêtre protège quelque chose.
+                # Tournant en permanence, il réveillait le CPU toutes les 2 s
+                # pendant les heures où l'overlay est invisible.
                 self._reassert_timer = QTimer(self)
+                self._reassert_timer.setInterval(2000)
                 self._reassert_timer.timeout.connect(self._apply_macos_window_settings)
-                self._reassert_timer.start(2000)
 
                 # Verbose diagnostic dump — diagnostic builds only (off by default;
                 # Ctrl+Shift+D gives the same dump on demand).
@@ -439,13 +451,15 @@ class SubtitleOverlay(QWidget):
             self.setWindowOpacity(1.0)
             self.label.setText(text)
             self._reposition()
+            self._arm_window_guard()
             self.hide_timer.start(self.config.display_duration_ms)
         except Exception:
             if not self._shutting_down:
                 log.exception("Error in _update_text")
 
-    def _render_final_lines(self) -> None:
-        """Affiche les tours de parole de l'énoncé, un par ligne.
+    @staticmethod
+    def _lines_html(lines) -> str:
+        """Compose les tours de parole, un par ligne.
 
         Le nom du locuteur est coloré et le corps échappé : une transcription
         contenant `<`, `&` ou `>` ne doit pas être interprétée comme du balisage.
@@ -453,7 +467,7 @@ class SubtitleOverlay(QWidget):
         from html import escape
 
         parts = []
-        for line in self._final_lines:
+        for line in lines:
             body = escape(line["text"])
             speaker = line.get("speaker")
             if speaker:
@@ -465,8 +479,66 @@ class SubtitleOverlay(QWidget):
                 )
             else:
                 parts.append(body)
+        return "<br>".join(parts)
+
+    def _render_final_lines(self) -> None:
+        """Affiche les tours de l'énoncé, en n'en gardant que ce qui tient.
+
+        La fenêtre est plafonnée à 40 % de la hauteur d'écran et le label ne
+        défile pas : au-delà, le texte était **coupé en silence** — mesuré à
+        820 px voulus pour 320 disponibles sur six tours empilés, et la réplique
+        de quelqu'un disparaissait sans que rien ne le signale. On retire donc
+        les tours les plus anciens jusqu'à ce que l'énoncé tienne : le plus
+        récent est celui qu'on est en train de lire, et la ligne complète reste
+        dans le transcript et l'historique.
+        """
+        budget = self.maximumHeight() - _CHROME_HEIGHT
+        # On rend une **copie** : `_final_lines` garde le texte entier, sinon une
+        # correction LLM tardive s'appliquerait à un texte déjà rogné.
+        lines = list(self._final_lines)
         self.label.setTextFormat(Qt.TextFormat.RichText)
-        self.label.setText("<br>".join(parts))
+        self.label.setText(self._lines_html(lines))
+
+        while len(lines) > 1 and self.label.sizeHint().height() > budget:
+            lines.pop(0)
+            self.label.setText(self._lines_html(lines))
+
+        # Un tour unique trop long ne peut pas être retiré : on montre sa fin —
+        # la partie qu'on vient d'entendre — derrière une ellipse qui dit que le
+        # début est ailleurs. Mieux qu'une coupe nette qui se fait passer pour
+        # la fin de la phrase.
+        if lines and self.label.sizeHint().height() > budget:
+            words = lines[0]["text"].split()
+            while len(words) > 4 and self.label.sizeHint().height() > budget:
+                words = words[max(1, len(words) // 8):]
+                lines[0] = {**lines[0], "text": "… " + " ".join(words)}
+                self.label.setText(self._lines_html(lines))
+
+    def _arm_window_guard(self) -> None:
+        """Réassertion périodique du niveau de fenêtre, pendant l'affichage."""
+        timer = getattr(self, "_reassert_timer", None)
+        if timer is not None and not timer.isActive():
+            timer.start()
+
+    def _disarm_window_guard(self) -> None:
+        timer = getattr(self, "_reassert_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _show_partial(self) -> None:
+        """Peint l'énoncé en cours et relance le fondu.
+
+        Le minuteur n'est relancé que quand des mots arrivent, jamais sur
+        `segment_start` : le texte précédent reste lisible pendant que le moteur
+        décode le suivant.
+        """
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
+        self.label.setText(join_words(self.current_text))
+        self._reposition()
+        self.fade_anim.stop()
+        self.setWindowOpacity(1.0)
+        self._arm_window_guard()
+        self.hide_timer.start(self.config.display_duration_ms)
 
     @pyqtSlot(dict)
     def _update_word(self, message: dict):
@@ -486,18 +558,18 @@ class SubtitleOverlay(QWidget):
                 # active so subtitles follow the user to another monitor.
                 if self.windowOpacity() == 0.0 or not self.isVisible():
                     self._position_window()
+            elif msg_type == "partial":
+                # Instantané complet de l'énoncé en cours : une seule peinture.
+                # Le moteur local publie une passe entière par message (cf.
+                # stt/transcriber.py) — repeindre par mot coûtait un adjustSize
+                # et un move de fenêtre à chaque mot, pour un état transitoire.
+                self.current_text = [w["text"] for w in message.get("words", [])]
+                self._show_partial()
             elif msg_type == "word":
-                # Add new word
+                # Mot à mot : chemin du mode remote, dont les events viennent du
+                # backend (cf. stt/remote.py) et arrivent réellement un par un.
                 self.current_text.append(message["text"])
-                full_text = " ".join(self.current_text)
-                self.label.setTextFormat(Qt.TextFormat.PlainText)
-                self.label.setText(full_text)
-                self._reposition()
-                # Reset fade timer only when actual words arrive, not on segment_start
-                # This lets the previous text remain visible while the model transcribes
-                self.fade_anim.stop()
-                self.setWindowOpacity(1.0)
-                self.hide_timer.start(self.config.display_duration_ms)
+                self._show_partial()
             elif msg_type == "final_text":
                 # Replace the streamed (raw) text with the post-processed/corrected
                 # final version. If `drop` is set, the segment was a hallucination —
@@ -508,6 +580,7 @@ class SubtitleOverlay(QWidget):
                     self.label.setText("")
                     self.fade_anim.stop()
                     self.setWindowOpacity(0.0)
+                    self._disarm_window_guard()
                     return
                 seq = message.get("seq")
                 text = message.get("text") or ""
@@ -531,6 +604,7 @@ class SubtitleOverlay(QWidget):
                 self._reposition()
                 self.fade_anim.stop()
                 self.setWindowOpacity(1.0)
+                self._arm_window_guard()
                 self.hide_timer.start(self.config.display_duration_ms)
         except Exception:
             if not self._shutting_down:
