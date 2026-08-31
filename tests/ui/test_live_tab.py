@@ -151,3 +151,61 @@ def test_le_transcript_est_ancre_en_bas(qtbot):
     first = tab.content_layout.itemAt(0)
     assert first.widget() is None  # un ressort, pas une ligne
     assert first.expandingDirections() != 0
+
+
+def _fill_past_the_fold(tab, qtbot, count=30):
+    """Assez de lignes pour dépasser la hauteur visible."""
+    tab.resize(800, 400)
+    tab.show()
+    qtbot.waitExposed(tab)
+    for i in range(count):
+        tab.on_event(_final(f"Ligne {i} " + "mot " * 25, "A", i))
+    qtbot.wait(50)
+
+
+def test_le_transcript_defile_quand_il_depasse_la_fenetre(qtbot):
+    """Le bas reste collé : la dernière phrase ne passe jamais sous le pli.
+
+    Un scroll déclenché à l'ajout du widget visait un maximum périmé — la ligne
+    venait d'être insérée mais n'avait pas encore sa hauteur (retour à la ligne
+    calculé au layout) — et l'affichage restait une ligne en arrière.
+    """
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    _fill_past_the_fold(tab, qtbot)
+
+    sb = tab.scroll.verticalScrollBar()
+    assert sb.maximum() > 0  # le contenu dépasse bien la fenêtre
+    assert sb.value() == sb.maximum()
+
+
+def test_une_correction_qui_rallonge_la_ligne_garde_le_bas_colle(qtbot):
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    _fill_past_the_fold(tab, qtbot)
+
+    tab.on_event(_final("Corrigé " + "mot " * 80, "A", 29, corrected=True))
+    qtbot.wait(50)
+    sb = tab.scroll.verticalScrollBar()
+    assert sb.value() == sb.maximum()
+
+
+def test_remonter_dans_le_transcript_suspend_le_defilement(qtbot):
+    """Relire une phrase plus haut ne doit pas être interrompu par la suite."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    _fill_past_the_fold(tab, qtbot)
+
+    sb = tab.scroll.verticalScrollBar()
+    sb.setValue(0)
+    assert tab._user_scrolled_up
+
+    tab.on_event(_final("Nouvelle phrase pendant la lecture.", "A", 100))
+    qtbot.wait(50)
+    assert sb.value() == 0
+
+    # Redescendre au bas réarme le suivi.
+    sb.setValue(sb.maximum())
+    tab.on_event(_final("Encore une phrase.", "A", 101))
+    qtbot.wait(50)
+    assert sb.value() == sb.maximum()

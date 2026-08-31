@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -94,6 +94,11 @@ class LiveTab(QWidget):
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        # Suivre le bas sur `rangeChanged`, pas juste après l'ajout du widget :
+        # une ligne qui vient d'être insérée n'a pas encore sa hauteur (le
+        # retour à la ligne se calcule au layout), si bien qu'un scroll immédiat
+        # visait un maximum périmé et laissait la dernière phrase sous le pli.
+        self.scroll.verticalScrollBar().rangeChanged.connect(self._on_range_changed)
 
         self.viewport_widget = QWidget()
         outer = QHBoxLayout(self.viewport_widget)
@@ -219,8 +224,8 @@ class LiveTab(QWidget):
         if not self.scroll.isVisible():
             self.empty.setVisible(False)
             self.scroll.setVisible(True)
-        if not self._user_scrolled_up:
-            QTimer.singleShot(0, self._scroll_to_bottom)
+        # Le suivi du bas est assuré par `_on_range_changed` dès que la
+        # nouvelle ligne a été mise en page.
 
     def _trim_items(self) -> None:
         """Retire les lignes les plus anciennes au-delà de `_MAX_ITEMS`.
@@ -243,6 +248,11 @@ class LiveTab(QWidget):
             self._correctable = [c for c in self._correctable if c is not widget]
             widget.setParent(None)
             widget.deleteLater()
+
+    def _on_range_changed(self, _minimum: int, _maximum: int) -> None:
+        """La hauteur du transcript a changé : recoller au bas si on le suivait."""
+        if not self._user_scrolled_up:
+            self._scroll_to_bottom()
 
     def _scroll_to_bottom(self) -> None:
         sb = self.scroll.verticalScrollBar()
