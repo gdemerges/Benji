@@ -177,6 +177,10 @@ class UIConfig:
     # modificateurs pour ne rien prendre à personne. "" = désactivé.
     # cf. benji/hotkeys.py.
     global_hotkey_pause: str = "Ctrl+Alt+Cmd+B"
+    # Marquer un moment (« là, c'est important ») sans quitter la visio : c'est
+    # le geste qu'on fait vraiment en réunion, et il n'a de valeur que s'il est
+    # à portée pendant qu'elle a lieu. "" = désactivé.
+    global_hotkey_mark: str = "Ctrl+Alt+Cmd+M"
     # Diagnostic only: verbose macOS window-state dump every 5s (off in prod).
     # Same info is available on demand via Ctrl+Shift+D.
     debug_macos_window: bool = False

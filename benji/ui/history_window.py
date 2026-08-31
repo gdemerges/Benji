@@ -12,6 +12,7 @@ d'encre), des secondaires (texte seul), une destructive (rouge, jamais un aplat,
 et toujours derrière une confirmation).
 """
 
+import logging
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,8 @@ from benji.ui.style import (
 )
 from benji.ui.widgets.sheet import Sheet
 from benji.ui.widgets.transcript_view import TranscriptView
+
+log = logging.getLogger(__name__)
 
 # Le PDF n'est pas un format de plus : c'est le seul qui parte à quelqu'un qui
 # n'a pas Benji. Les trois autres se rouvrent dans un éditeur, celui-ci se lit.
@@ -352,10 +355,32 @@ class HistoryWindow(QWidget):
             return
         self._meeting_id = self._id_at(row)
         # Les noms de locuteurs sont propres à une réunion : « A » n'est pas la
-        # même personne d'une réunion à l'autre.
-        self._speaker_names = {}
+        # même personne d'une réunion à l'autre. Ils sont **persistés** avec la
+        # réunion : nommés une fois (souvent en direct, quand on sait encore qui
+        # parle), ils valent pour toutes les relectures et les exports.
+        self._speaker_names = self._load_speaker_names()
         self._refresh_meeting_controls()
         self.load_history()
+
+    def _marks(self) -> list:
+        """Moments marqués de la réunion affichée. Jamais fatal."""
+        if self._meeting_id is None or self._meeting_id == meetings.LEGACY_ID:
+            return []
+        try:
+            return meetings.marks(self._meeting_id)
+        except Exception:
+            log.exception("Marques illisibles")
+            return []
+
+    def _load_speaker_names(self) -> dict:
+        """Noms persistés de la réunion affichée. Jamais fatal : c'est un confort."""
+        if self._meeting_id is None or self._meeting_id == meetings.LEGACY_ID:
+            return {}
+        try:
+            return meetings.speaker_names(self._meeting_id)
+        except Exception:
+            log.exception("Noms de locuteurs illisibles")
+            return {}
 
     def _refresh_meeting_controls(self) -> None:
         real = self._meeting_id is not None and self._meeting_id != meetings.LEGACY_ID
@@ -433,7 +458,7 @@ class HistoryWindow(QWidget):
         self._entries = search.filter_entries(all_entries, self.search.text())
         self.title_label.setText(self._current_title() or "Aucune réunion")
         self.meta_label.setText(self._meta_text())
-        self.transcript.set_entries(self._entries, self._speaker_names)
+        self.transcript.set_entries(self._entries, self._speaker_names, self._marks())
         self._refresh_export_enabled()
 
     def _on_search_changed(self, _text: str) -> None:
@@ -476,7 +501,9 @@ class HistoryWindow(QWidget):
     def _copy_to_clipboard(self):
         if not self._entries:
             return
-        QGuiApplication.clipboard().setText(export.to_txt(self._entries, self._speaker_names))
+        QGuiApplication.clipboard().setText(
+            export.to_txt(self._entries, self._speaker_names, self._marks())
+        )
 
     def _open_export_menu(self):
         if not self._entries:
@@ -500,10 +527,12 @@ class HistoryWindow(QWidget):
                 # référence, celui qu'on lit déjà à l'écran.
                 from benji.ui.pdf_export import write_pdf
 
-                markdown = export.render(self._entries, "md", self._speaker_names)
+                markdown = export.render(self._entries, "md", self._speaker_names,
+                                         self._marks())
                 write_pdf(markdown, path, title=self._current_title())
             else:
-                content = export.render(self._entries, fmt, self._speaker_names)
+                content = export.render(self._entries, fmt, self._speaker_names,
+                                        self._marks())
                 Path(path).write_text(content, encoding="utf-8")
         except OSError as e:
             QMessageBox.warning(self, "Benji", f"Export impossible : {e}")
@@ -537,6 +566,11 @@ class HistoryWindow(QWidget):
                 self._speaker_names[label] = name
             else:
                 self._speaker_names.pop(label, None)
+            if self._meeting_id and self._meeting_id != meetings.LEGACY_ID:
+                try:
+                    meetings.name_speaker(label, name, self._meeting_id)
+                except Exception:
+                    log.exception("Nom de locuteur non persisté")
         self.load_history()  # ré-affiche avec les nouveaux noms
 
     def clear_history(self):

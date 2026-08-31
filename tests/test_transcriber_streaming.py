@@ -590,3 +590,38 @@ def test_le_transcripteur_affiche_sans_conserver_avant_laccord(monkeypatch):
 
     assert t.consent.arm() == 1
     assert t.history.added == [("Bonjour monde", None)]
+
+
+def test_un_terme_appris_vaut_pour_la_reunion_en_cours(monkeypatch, tmp_path):
+    """Le glossaire est compilé une fois, exprès (le relire par segment mettrait
+    le disque sur le chemin chaud). Un terme appris en réunion doit pourtant
+    valoir tout de suite : au prochain lancement, c'est trop tard pour la seule
+    réunion où l'on parle de ce client-là."""
+    from benji.stt import lexicon
+
+    glossaire = tmp_path / "glossary.txt"
+    monkeypatch.setattr(lexicon, "glossary_path", lambda: glossaire)
+
+    t, _ = _make(monkeypatch, [[("On", 0.0, 0.2), ("surveille", 0.2, 0.5),
+                                ("avec", 0.5, 0.7), ("data", 0.7, 1.0),
+                                ("dogue", 1.0, 1.4)]])
+    t.history = _FakeHistory()
+    t.consent = RecordingConsent(t.history, armed=True)
+    assert t._lexicon == []
+
+    assert t.learn_term("Datadog") is True
+
+    t._run_segment(_audio(1.4), is_final=True)
+    assert "Datadog" in t.history.added[0][0]
+
+
+def test_apprendre_un_terme_deja_connu_ne_recompile_pas_pour_rien(monkeypatch, tmp_path):
+    from benji.stt import lexicon
+
+    glossaire = tmp_path / "glossary.txt"
+    glossaire.write_text("Datadog\n", encoding="utf-8")
+    monkeypatch.setattr(lexicon, "glossary_path", lambda: glossaire)
+
+    t, _ = _make(monkeypatch, [[("x", 0.0, 0.1)]])
+
+    assert t.learn_term("datadog") is False

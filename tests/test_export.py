@@ -104,3 +104,46 @@ def test_entries_sorted_and_blank_filtered():
     assert len(lines) == 2
     assert "premier" in lines[0]
     assert "troisième" in lines[1]
+
+
+# --- moments marqués ---
+
+
+def _entries_marquables():
+    return [
+        {"timestamp": "2026-08-31T14:00:00", "text": "Premier point.", "speaker": "A"},
+        {"timestamp": "2026-08-31T14:05:00", "text": "Le chiffre important.", "speaker": "B"},
+    ]
+
+
+def test_le_txt_signale_les_lignes_marquees():
+    """Un compte rendu exporté sans elles perdrait ce que quelqu'un a désigné."""
+    from datetime import datetime
+
+    out = export.to_txt(_entries_marquables(), None, [datetime(2026, 8, 31, 14, 5, 30)])
+
+    lignes = out.strip().splitlines()
+    assert not lignes[0].startswith(export.MARK_GLYPH)
+    assert lignes[1].startswith(export.MARK_GLYPH)
+
+
+def test_le_markdown_signale_les_lignes_marquees():
+    from datetime import datetime
+
+    out = export.to_markdown(_entries_marquables(), None, [datetime(2026, 8, 31, 14, 5, 30)])
+
+    assert export.MARK_GLYPH in out
+    assert out.count(export.MARK_GLYPH) == 1
+
+
+def test_le_srt_ignore_les_marques():
+    """Un sous-titre n'est pas un compte rendu."""
+    from datetime import datetime
+
+    out = export.to_srt(_entries_marquables(), None, [datetime(2026, 8, 31, 14, 5, 30)])
+
+    assert export.MARK_GLYPH not in out
+
+
+def test_sans_marque_le_rendu_est_inchange():
+    assert export.to_txt(_entries_marquables()) == export.to_txt(_entries_marquables(), None, [])

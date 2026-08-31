@@ -408,6 +408,25 @@ class BenjiApplication:
             return None
         return consent
 
+    def _mark_moment(self) -> bool:
+        """Marque le moment présent. Faux si rien n'a encore été transcrit.
+
+        Passe par la fenêtre quand elle existe (la marque doit *se voir* sur la
+        ligne de temps), sinon écrit directement dans le registre — l'overlay
+        seul reste un mode d'usage complet.
+        """
+        if self.main_window is not None:
+            return self.main_window.live_tab.mark_moment()
+        from benji import meetings
+
+        return meetings.add_mark() is not None
+
+    def _learn_term(self, term: str) -> bool:
+        """Apprend un terme du glossaire et l'arme sur le moteur en cours."""
+        if self.transcriber is None:
+            return False
+        return self.transcriber.learn_term(term)
+
     @property
     def _has_consent_gate(self) -> bool:
         return getattr(getattr(self, "transcriber", None), "consent", None) is not None
@@ -487,6 +506,7 @@ class BenjiApplication:
             on_open_preferences=self._open_preferences,
             on_toggle_pause=self.toggle_pause,
             on_save_meeting=self._save_meeting if self._consent is not None else None,
+            on_learn_term=self._learn_term if self.transcriber is not None else None,
             session=self.session,
             backend_url=self.cfg.llm.backend_url,
         )
@@ -508,6 +528,7 @@ class BenjiApplication:
             is_paused=lambda: self.capture.is_paused,
             stats=self.stats,
             stt_config=self.cfg.stt,
+            mark_moment=self._mark_moment,
             save_meeting=self._save_meeting if self._has_consent_gate else None,
             is_saving=self._is_saving,
             on_new_meeting=self._on_new_meeting,
@@ -557,14 +578,34 @@ class BenjiApplication:
         si Benji est au premier plan — jamais le cas quand Teams est en plein
         écran, c'est-à-dire exactement quand on en a besoin.
         """
-        if not self.cfg.ui.global_hotkey_pause:
+        if not (self.cfg.ui.global_hotkey_pause or self.cfg.ui.global_hotkey_mark):
             return
         from benji.hotkeys import GlobalHotkeys
 
         self.global_hotkeys = GlobalHotkeys()
-        self.global_hotkeys.register(
-            self.cfg.ui.global_hotkey_pause, self._toggle_pause_notified
-        )
+        if self.cfg.ui.global_hotkey_pause:
+            self.global_hotkeys.register(
+                self.cfg.ui.global_hotkey_pause, self._toggle_pause_notified
+            )
+        if self.cfg.ui.global_hotkey_mark:
+            self.global_hotkeys.register(
+                self.cfg.ui.global_hotkey_mark, self._mark_moment_notified
+            )
+
+    def _mark_moment_notified(self) -> None:
+        """Marque un moment et le **dit** — même règle que la pause : un geste
+        posé hors de la vue doit se voir confirmé, sinon on ne sait pas s'il a
+        porté et on le refait trois fois."""
+        marked = self._mark_moment()
+        if self.tray is not None:
+            from PyQt6.QtWidgets import QSystemTrayIcon
+
+            self.tray.showMessage(
+                "Benji",
+                "Moment marqué" if marked else "Rien à marquer pour l'instant",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
 
     def _toggle_pause_notified(self) -> None:
         """Bascule la pause et le **dit** — un raccourci global agit hors de la vue.

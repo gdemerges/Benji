@@ -14,7 +14,7 @@ from benji.recording import RecordingConsent
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend, build_final_backend
 from benji.stt.diarization import build_tagger, label_windows, split_by_speaker
-from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
+from benji.stt.lexicon import add_term, apply_lexicon, compile_terms, load_terms
 from benji.stt.postprocessing import is_hallucination, postprocess_text
 
 
@@ -94,6 +94,24 @@ class Transcriber:
         # Chargé une fois : le fichier est édité depuis les Préférences, et un
         # rechargement à chaud ferait relire le disque à chaque segment.
         self._lexicon = compile_terms(load_terms()) if self.config.glossary else []
+
+    def learn_term(self, term: str) -> bool:
+        """Apprend un terme sans relire le disque à chaque segment.
+
+        Le glossaire est compilé une fois au démarrage, exprès : le relire par
+        segment mettrait le disque sur le chemin chaud. Un terme appris en
+        réunion doit pourtant valoir **tout de suite**, sinon la correction
+        n'arrive qu'au prochain lancement — c'est-à-dire trop tard pour la
+        réunion en cours, la seule où l'on parle de ce client-là.
+
+        La liste est **rebindée**, pas mutée : le thread STT itère dessus
+        pendant ce temps, il verra l'ancienne ou la nouvelle, jamais un état
+        intermédiaire.
+        """
+        if not add_term(term):
+            return False
+        self._lexicon = compile_terms(load_terms())
+        return True
 
     def warmup(self) -> None:
         """Décodage à blanc pour amortir la compilation des noyaux Metal.

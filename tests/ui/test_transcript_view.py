@@ -42,7 +42,11 @@ def test_les_noms_choisis_remplacent_les_labels(qtbot):
     qtbot.addWidget(view)
     view.set_entries([_entry("10:00:01", "Bonjour.", "A")], {"A": "Alice"})
 
-    assert view._items[0]._speaker == "Alice"
+    item = view._items[0]
+    # Le nom est un affichage : l'étiquette du moteur reste, sinon la couleur du
+    # locuteur changerait au moment où on le nomme.
+    assert item._speaker == "A"
+    assert item.speaker_label.text() == "ALICE"
 
 
 def test_entrees_desordonnees_sont_remises_dans_l_ordre(qtbot):

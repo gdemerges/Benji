@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from benji.paths import user_path
@@ -38,12 +38,35 @@ def default_title(started_at: datetime) -> str:
     return f"Réunion du {started_at.strftime('%d/%m à %H:%M')}"
 
 
+def _parse_marks(raw) -> list[datetime]:
+    """Marques lisibles seulement. Registre écrit avant elles : absent, pas invalide."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for value in raw:
+        try:
+            out.append(datetime.fromisoformat(value))
+        except (TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
 @dataclass
 class Meeting:
     id: str
     title: str
     started_at: datetime
     ended_at: datetime | None = None
+    # Étiquette du moteur (« SPEAKER_01 ») → nom donné par l'utilisateur. Nommé
+    # pendant la réunion, quand on sait encore qui est qui : trois jours plus
+    # tard, personne ne s'en souvient. Porté par la réunion, donc valable pour
+    # l'affichage **et** l'export, sans ressaisie.
+    speakers: dict[str, str] = field(default_factory=dict)
+    # Moments marqués (« là, c'est important »), horodatés. C'est le geste qu'on
+    # fait vraiment en réunion : la ligne de temps porte déjà le quand et le qui,
+    # il ne lui manquait que le *ça*. Stockés ici plutôt que sur les entrées
+    # d'historique — marquer ne doit pas réécrire un JSONL append-only.
+    marks: list[datetime] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -51,17 +74,24 @@ class Meeting:
             "title": self.title,
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "speakers": dict(self.speakers),
+            "marks": [m.isoformat() for m in self.marks],
         }
 
     @classmethod
     def from_dict(cls, raw: dict) -> Meeting | None:
         try:
             ended = raw.get("ended_at")
+            speakers = raw.get("speakers")
             return cls(
                 id=str(raw["id"]),
                 title=str(raw.get("title") or ""),
                 started_at=datetime.fromisoformat(raw["started_at"]),
                 ended_at=datetime.fromisoformat(ended) if ended else None,
+                # Registre écrit avant les noms de locuteurs : absent, pas invalide.
+                speakers={str(k): str(v) for k, v in speakers.items()}
+                if isinstance(speakers, dict) else {},
+                marks=_parse_marks(raw.get("marks")),
             )
         except (KeyError, TypeError, ValueError):
             # Ligne corrompue : on l'ignore plutôt que de perdre tout le registre.
@@ -126,6 +156,43 @@ class MeetingStore:
             for entry in raw:
                 if entry.get("id") == meeting_id:
                     entry["title"] = title
+            self._write(raw)
+
+    def name_speaker(self, meeting_id: str, label: str, name: str) -> None:
+        """Nomme (ou dénomme, avec un nom vide) un locuteur de la réunion."""
+        label = (label or "").strip()
+        if not label:
+            return
+        name = (name or "").strip()
+        with self._lock:
+            raw = self._read()
+            for entry in raw:
+                if entry.get("id") != meeting_id:
+                    continue
+                speakers = entry.get("speakers")
+                if not isinstance(speakers, dict):
+                    speakers = {}
+                if name:
+                    speakers[label] = name
+                else:
+                    speakers.pop(label, None)
+                entry["speakers"] = speakers
+            self._write(raw)
+
+    def add_mark(self, meeting_id: str, at: datetime) -> None:
+        """Marque un moment de la réunion."""
+        stamp = at.isoformat()
+        with self._lock:
+            raw = self._read()
+            for entry in raw:
+                if entry.get("id") != meeting_id:
+                    continue
+                marks = entry.get("marks")
+                if not isinstance(marks, list):
+                    marks = []
+                if stamp not in marks:
+                    marks.append(stamp)
+                entry["marks"] = marks
             self._write(raw)
 
     def delete(self, meeting_id: str) -> None:
@@ -198,6 +265,74 @@ def current_meeting_id() -> str | None:
     """
     with _current_lock:
         return _current.id if _current is not None else None
+
+
+def name_speaker(label: str, name: str, meeting_id: str | None = None) -> None:
+    """Nomme un locuteur de la réunion en cours (ou d'une réunion donnée)."""
+    target = meeting_id or current_meeting_id()
+    if target is None:
+        return
+    store().name_speaker(target, label, name)
+
+
+def speaker_names(meeting_id: str | None = None) -> dict[str, str]:
+    """Noms donnés aux locuteurs d'une réunion. Vide si aucune ou inconnue."""
+    target = meeting_id or current_meeting_id()
+    if target is None:
+        return {}
+    meeting = store().get(target)
+    return dict(meeting.speakers) if meeting is not None else {}
+
+
+def add_mark(at: datetime | None = None, meeting_id: str | None = None) -> datetime | None:
+    """Marque le moment présent dans la réunion en cours. None si aucune.
+
+    Aucune réunion ouverte = rien n'a encore été transcrit : il n'y a pas de
+    moment à marquer, et en ouvrir une pour ça créerait une réunion vide.
+    """
+    target = meeting_id or current_meeting_id()
+    if target is None:
+        return None
+    stamp = at or datetime.now()
+    store().add_mark(target, stamp)
+    return stamp
+
+
+def marks(meeting_id: str | None = None) -> list[datetime]:
+    """Moments marqués d'une réunion, dans l'ordre. Vide si aucune ou inconnue."""
+    target = meeting_id or current_meeting_id()
+    if target is None:
+        return []
+    meeting = store().get(target)
+    return list(meeting.marks) if meeting is not None else []
+
+
+def marked_indices(entries, marks) -> set[int]:
+    """Indices des entrées portant une marque. **Pure**.
+
+    Une marque tombe *après* la phrase qu'elle désigne — on marque ce qu'on
+    vient d'entendre, jamais ce qui va se dire. On la rattache donc à la
+    dernière entrée commencée avant elle ; une marque antérieure à tout le
+    transcript n'accroche rien plutôt que de décorer la première phrase venue.
+    """
+    stamps = []
+    for i, entry in enumerate(entries):
+        try:
+            stamps.append((datetime.fromisoformat(entry["timestamp"]), i))
+        except (KeyError, TypeError, ValueError):
+            continue
+    stamps.sort()
+    out: set[int] = set()
+    for mark in marks:
+        candidate = None
+        for stamp, i in stamps:
+            if stamp <= mark:
+                candidate = i
+            else:
+                break
+        if candidate is not None:
+            out.add(candidate)
+    return out
 
 
 def start_meeting(title: str | None = None) -> Meeting:

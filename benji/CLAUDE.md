@@ -22,7 +22,11 @@
 
 `paths.py` — emplacement des données utilisateur (`~/Library/Application Support/Benji`) vs cache re-téléchargeable (`~/.cache/benji`, modèles seulement), avec migration au premier accès. Les chemins sont résolus **à l'appel**, jamais à l'import.
 
-`meetings.py` — registre des réunions (id, titre, début, fin) dans `meetings.json` (0600, écriture atomique). La réunion courante est un état **du process** (plusieurs `TranscriptionHistory` écrivent le même fichier) et n'est ouverte que par la première transcription : `current_meeting_id()` lit sans créer.
+`recording.py` — **portillon de conservation**, pur. Le direct s'affiche toujours ; l'écriture disque attend l'accord, et l'attente (bornée) est versée à ce moment-là. Ne logue que des comptes, jamais du texte.
+
+`queues.py` — `NotifyingQueue` : le producteur réveille son consommateur. Sonder `display_queue` plus lentement aurait retardé le premier mot d'un énoncé, la sonder vite réveillait le CPU en permanence.
+
+`meetings.py` — registre des réunions (id, titre, début, fin, **noms de locuteurs**, **moments marqués**) dans `meetings.json` (0600, écriture atomique). La réunion courante est un état **du process** (plusieurs `TranscriptionHistory` écrivent le même fichier) et n'est ouverte que par la première transcription : `current_meeting_id()` lit sans créer.
 
 `llm/mlx_runner.py` — **fil unique d'inférence mlx-lm**. Un stream MLX n'appartient qu'au thread qui l'a créé, et `mlx_lm` crée le sien *à l'import* : le premier des quatre consommateurs (correcteur sur le thread STT, titreur, résumé en direct, `SummaryWorker` de Qt) confisquait le moteur, les autres levaient « There is no Stream(gpu, N) in current thread ». Tout passe désormais par ce fil — chargement des poids compris, MLX liant un tableau au thread qui l'évalue en premier — et il **s'approprie** le `generation_stream` du module au cas où `mlx_lm` aurait été importé ailleurs avant lui. Piège : `mlx_lm.generate` est la *fonction*, pas le module ; la réattribution vise `sys.modules["mlx_lm.generate"]`.
 

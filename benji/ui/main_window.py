@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         on_open_preferences=None,
         on_toggle_pause=None,
         on_save_meeting=None,
+        on_learn_term=None,
         session=None,
         backend_url: str = "",
         parent=None,
@@ -83,6 +84,8 @@ class MainWindow(QMainWindow):
         # Accord de conservation (cf. benji/recording.py) : None = pas de
         # portillon, tout est conservé d'office et le bandeau ne s'affiche pas.
         self._on_save_meeting = on_save_meeting
+        # Apprentissage du glossaire depuis le transcript (moteur local seul).
+        self._on_learn_term = on_learn_term
         self._paused = False
         # Contrôleur compte/facturation (login + abonnement Stripe) — présent
         # seulement si une session est fournie. Succès/erreurs via QMessageBox.
@@ -211,6 +214,8 @@ class MainWindow(QMainWindow):
 
         # === Bus wiring ===
         self.live_tab.save_requested.connect(self._save_meeting)
+        if self._on_learn_term is not None:
+            self.live_tab.set_learn_handler(self._on_learn_term)
         self.live_tab.set_consent_pending(self._on_save_meeting is not None)
 
         self._bus.event.connect(self.live_tab.on_event)

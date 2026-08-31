@@ -176,9 +176,9 @@ def load_terms(path=None) -> list[str]:
     Le contenu n'est jamais loggué : seul son *nombre de termes* l'est, parce
     qu'un glossaire liste des clients et des projets.
     """
-    from benji.paths import user_path
-
-    path = path or user_path(GLOSSARY_NAME)
+    # Même source de chemin que l'écriture : deux résolutions distinctes du
+    # même fichier finissent par diverger.
+    path = path or glossary_path()
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -299,3 +299,25 @@ def save_glossary(raw: str, path=None) -> None:
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(raw if raw.endswith("\n") else raw + "\n")
+
+
+def add_term(term: str, path=None) -> bool:
+    """Ajoute un terme au glossaire de l'utilisateur. Faux s'il y était déjà.
+
+    Le glossaire est le seul levier qui reste sur les noms propres — le point
+    faible n°1 d'une transcription de réunion — mais il fallait aller le saisir
+    dans les Préférences, c'est-à-dire au moment où on ne pense pas à lui. Le
+    nourrir depuis le transcript, quand on vient de *voir* la faute, est ce qui
+    le rend vivant.
+
+    Le terme n'est pas loggué : il nomme un client ou un projet.
+    """
+    term = (term or "").strip()
+    if not term:
+        return False
+    existing = load_terms(path)
+    if any(t.lower() == term.lower() for t in existing):
+        return False
+    save_glossary("\n".join([*existing, term]), path)
+    log.info("Glossaire : 1 terme ajouté (%d au total)", len(existing) + 1)
+    return True

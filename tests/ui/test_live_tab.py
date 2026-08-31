@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from benji.ui.live_tab import LiveTab
 
 
@@ -343,3 +345,105 @@ def test_le_bandeau_ne_prend_pas_le_rouge_du_direct(qtbot):
 
     assert rouge not in tab.consent.button.styleSheet().lower()
     assert rouge not in tab.consent.label.styleSheet().lower()
+
+
+def test_marquer_designe_la_derniere_chose_dite(qtbot, monkeypatch):
+    """On réagit à ce qu'on vient d'entendre, jamais à ce qui va se dire."""
+    import benji.ui.live_tab as live_tab_mod
+
+    marques = []
+    monkeypatch.setattr(live_tab_mod.meetings, "add_mark", lambda: marques.append(1))
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.on_event(_final("Une phrase.", "A", 1))
+    tab.on_event(_final("Le chiffre important.", "A", 2))
+
+    assert tab.mark_moment() is True
+
+    items = _items(tab)
+    assert [i.marked for i in items] == [False, True]
+    assert marques == [1]
+
+
+def test_marquer_sans_rien_de_transcrit_ne_fait_rien(qtbot, monkeypatch):
+    import benji.ui.live_tab as live_tab_mod
+
+    monkeypatch.setattr(live_tab_mod.meetings, "add_mark",
+                        lambda: pytest.fail("aucune marque attendue"))
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+
+    assert tab.mark_moment() is False
+
+
+def test_un_registre_indisponible_laisse_la_marque_a_lecran(qtbot, monkeypatch):
+    """Marquer est un confort : ça n'interrompt pas une réunion."""
+    import benji.ui.live_tab as live_tab_mod
+
+    def _boom():
+        raise OSError("disque plein")
+
+    monkeypatch.setattr(live_tab_mod.meetings, "add_mark", _boom)
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.on_event(_final("Une phrase.", "A", 1))
+
+    assert tab.mark_moment() is True
+    assert _items(tab)[-1].marked
+
+
+def test_nommer_un_locuteur_change_laffichage_pas_letiquette(qtbot):
+    """L'étiquette porte la couleur : la changer ferait sauter la teinte du
+    locuteur au moment précis où on le nomme."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.on_event(_final("Bonjour.", "SPEAKER_01", 1))
+
+    tab.set_speaker_name("SPEAKER_01", "Alice")
+
+    item = _items(tab)[0]
+    assert item._speaker == "SPEAKER_01"
+    assert item.speaker_label.text() == "ALICE"
+
+
+def test_le_nom_vaut_aussi_pour_les_phrases_suivantes(qtbot):
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.on_event(_final("Bonjour.", "SPEAKER_01", 1))
+    tab.set_speaker_name("SPEAKER_01", "Alice")
+
+    tab.on_event(_final("Autre chose.", "SPEAKER_02", 2))
+    tab.on_event(_final("Je reprends.", "SPEAKER_01", 3))
+
+    assert _items(tab)[-1].speaker_label.text() == "ALICE"
+
+
+def test_apprendre_un_terme_corrige_la_ligne_deja_affichee(qtbot, monkeypatch, tmp_path):
+    """Sans ça, le terme appris ne corrigerait que la suite — et la faute qu'on
+    regardait resterait à l'écran."""
+    from benji.stt import lexicon
+
+    glossaire = tmp_path / "glossary.txt"
+    monkeypatch.setattr(lexicon, "glossary_path", lambda: glossaire)
+    monkeypatch.setattr(lexicon, "load_terms", lambda path=None: ["Datadog"])
+
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.set_learn_handler(lambda term: True)
+    tab.on_event(_final("On surveille avec data dogue.", "A", 1))
+
+    tab._reapply_lexicon()
+
+    assert "Datadog" in _items(tab)[0]._text
+
+
+def test_la_copie_utilise_le_nom_donne_pas_letiquette(qtbot):
+    """Un compte rendu qui part à quelqu'un ne dit pas « SPEAKER_01 »."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("Bonjour.", "SPEAKER_01", 1))
+    tab.set_speaker_name("SPEAKER_01", "Alice")
+
+    assert "Alice : Bonjour." in tab.transcript_text()
+    assert "SPEAKER_01" not in tab.transcript_text()

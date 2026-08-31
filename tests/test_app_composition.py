@@ -286,7 +286,9 @@ def test_le_raccourci_global_est_optionnel():
     """Un raccourci vide ne doit pas armer Carbon pour rien."""
     from benji.config import UIConfig
 
-    app = BenjiApplication(AppConfigs(ui=UIConfig(global_hotkey_pause="")))
+    app = BenjiApplication(AppConfigs(
+        ui=UIConfig(global_hotkey_pause="", global_hotkey_mark="")
+    ))
     app._install_global_hotkeys()
 
     assert app.global_hotkeys is None

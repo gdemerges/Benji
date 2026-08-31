@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from benji import meetings
 from benji.ui.style import FONT_UI, current_theme
 from benji.ui.widgets.chat_item import ChatItem
 
@@ -90,7 +91,8 @@ class TranscriptView(QWidget):
         self.set_entries([])
 
     def set_entries(self, entries: list[dict],
-                    speaker_names: dict[str, str] | None = None) -> None:
+                    speaker_names: dict[str, str] | None = None,
+                    marks: list | None = None) -> None:
         """Recompose entièrement la vue à partir d'entrées d'historique."""
         self._clear()
         rows = [e for e in entries if e.get("text", "").strip()]
@@ -101,15 +103,21 @@ class TranscriptView(QWidget):
         if not rows:
             return
 
+        # Les moments marqués sont portés par la réunion, pas par les entrées :
+        # marquer ne doit pas réécrire un historique append-only.
+        marked = meetings.marked_indices(rows, marks or [])
+
         last_speaker: str | None = None
         last_time: datetime | None = None
         last_minute: str | None = None
         for entry in rows:
             ts = _parse_ts(entry) or datetime.min
             raw_speaker = entry.get("speaker")
-            speaker = raw_speaker
+            # Le nom donné est un **affichage** : passé comme étiquette, il
+            # changeait la couleur du locuteur au moment où on le nommait.
+            name = None
             if raw_speaker and speaker_names and speaker_names.get(raw_speaker, "").strip():
-                speaker = speaker_names[raw_speaker].strip()
+                name = speaker_names[raw_speaker].strip()
 
             new_group = (
                 last_time is None
@@ -121,8 +129,10 @@ class TranscriptView(QWidget):
             if show_ts:
                 last_minute = minute
 
-            item = ChatItem(entry["text"].strip(), ts=ts, speaker=speaker,
-                            show_header=new_group, show_ts=show_ts)
+            item = ChatItem(entry["text"].strip(), ts=ts, speaker=raw_speaker,
+                            show_header=new_group, show_ts=show_ts, name=name)
+            if len(self._items) in marked:
+                item.set_marked(True)
             self.content_layout.insertWidget(self.content_layout.count() - 1, item)
             self._items.append(item)
             last_speaker = raw_speaker

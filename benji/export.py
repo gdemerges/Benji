@@ -7,6 +7,11 @@ disque, aucune dépendance Qt → directement testable.
 `speaker_names` est une table de correspondance optionnelle label → nom lisible
 (ex. `{"A": "Alice"}`) appliquée au rendu ; les labels absents sont laissés tels
 quels.
+
+`marks` est la liste des moments marqués pendant la réunion (cf.
+`benji/meetings.py`) : les lignes concernées ressortent d'une étoile. Un compte
+rendu exporté sans elles perdrait précisément ce que quelqu'un a pris la peine
+de désigner. Le SRT les ignore — un sous-titre n'est pas un compte rendu.
 """
 
 from __future__ import annotations
@@ -15,10 +20,23 @@ from datetime import datetime
 
 SUPPORTED_FORMATS = ("txt", "md", "srt")
 
+# Ce qui distingue une ligne marquée dans un document exporté. Lisible partout,
+# y compris dans un terminal ou un client mail qui ne rend rien.
+MARK_GLYPH = "★"
+
 # Vitesse de lecture approximative (caractères/seconde) pour estimer la durée
 # d'un sous-titre quand aucune borne de fin n'est disponible.
 _CHARS_PER_SECOND = 15.0
 _MIN_SUBTITLE_SECONDS = 1.5
+
+
+def _marked_indices(rows: list[dict], marks) -> set[int]:
+    """Import tardif : `export` est pur et ne doit pas tirer le registre à vide."""
+    if not marks:
+        return set()
+    from benji import meetings
+
+    return meetings.marked_indices(rows, marks)
 
 
 def _display_speaker(entry: dict, speaker_names: dict[str, str] | None) -> str | None:
@@ -53,10 +71,13 @@ def _sorted_with_text(entries: list[dict]) -> list[dict]:
     return sorted(kept, key=key)
 
 
-def to_txt(entries: list[dict], speaker_names: dict[str, str] | None = None) -> str:
+def to_txt(entries: list[dict], speaker_names: dict[str, str] | None = None,
+           marks: list | None = None) -> str:
     """Texte brut : `[YYYY-MM-DD HH:MM:SS] Locuteur : texte` par ligne."""
+    rows = _sorted_with_text(entries)
+    marked = _marked_indices(rows, marks)
     lines = []
-    for entry in _sorted_with_text(entries):
+    for i, entry in enumerate(rows):
         try:
             ts = datetime.fromisoformat(entry["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
             prefix = f"[{ts}] "
@@ -64,13 +85,16 @@ def to_txt(entries: list[dict], speaker_names: dict[str, str] | None = None) -> 
             prefix = ""
         speaker = _display_speaker(entry, speaker_names)
         who = f"{speaker} : " if speaker else ""
-        lines.append(f"{prefix}{who}{entry['text'].strip()}")
+        star = f"{MARK_GLYPH} " if i in marked else ""
+        lines.append(f"{star}{prefix}{who}{entry['text'].strip()}")
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def to_markdown(entries: list[dict], speaker_names: dict[str, str] | None = None) -> str:
+def to_markdown(entries: list[dict], speaker_names: dict[str, str] | None = None,
+                marks: list | None = None) -> str:
     """Markdown : titre daté puis un paragraphe horodaté par utterance."""
     rows = _sorted_with_text(entries)
+    marked = _marked_indices(rows, marks)
     if not rows:
         return "# Transcription\n\n_Aucune transcription._\n"
 
@@ -81,7 +105,7 @@ def to_markdown(entries: list[dict], speaker_names: dict[str, str] | None = None
         title = "# Transcription"
 
     blocks = [title, ""]
-    for entry in rows:
+    for i, entry in enumerate(rows):
         try:
             clock = datetime.fromisoformat(entry["timestamp"]).strftime("%H:%M:%S")
             meta = f"`{clock}`"
@@ -90,6 +114,8 @@ def to_markdown(entries: list[dict], speaker_names: dict[str, str] | None = None
         speaker = _display_speaker(entry, speaker_names)
         if speaker:
             meta = f"{meta} · **{speaker}**" if meta else f"**{speaker}**"
+        if i in marked:
+            meta = f"{MARK_GLYPH} {meta}" if meta else MARK_GLYPH
         if meta:
             blocks.append(meta + "  ")  # deux espaces = saut de ligne markdown
         blocks.append(entry["text"].strip())
@@ -111,7 +137,8 @@ def _estimated_duration(text: str) -> float:
     return max(_MIN_SUBTITLE_SECONDS, len(text) / _CHARS_PER_SECOND)
 
 
-def to_srt(entries: list[dict], speaker_names: dict[str, str] | None = None) -> str:
+def to_srt(entries: list[dict], speaker_names: dict[str, str] | None = None,
+           marks: list | None = None) -> str:
     """Sous-titres SRT. Les bornes de temps sont dérivées des horodatages :
     fin d'un segment = début du suivant (ou durée estimée pour le dernier)."""
     rows = _sorted_with_text(entries)
@@ -148,10 +175,11 @@ _RENDERERS = {
 }
 
 
-def render(entries: list[dict], fmt: str, speaker_names: dict[str, str] | None = None) -> str:
+def render(entries: list[dict], fmt: str, speaker_names: dict[str, str] | None = None,
+           marks: list | None = None) -> str:
     """Rend les entrées dans le format demandé (`txt` / `md` / `srt`)."""
     try:
         renderer = _RENDERERS[fmt]
     except KeyError:
         raise ValueError(f"Format d'export inconnu : {fmt!r}") from None
-    return renderer(entries, speaker_names)
+    return renderer(entries, speaker_names, marks)

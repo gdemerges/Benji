@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, Qt
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
@@ -38,16 +38,23 @@ _SPINE_X = _GUTTER_WIDTH + 10   # abscisse du filet vertical
 _STEM_X = _SPINE_X + 9          # abscisse de la tige colorée
 _TEXT_X = _STEM_X + 14          # début du texte
 _TICK_HALF = 3                  # demi-longueur du tick horizontal
+_MARK_RADIUS = 3.0              # encoche d'un moment marqué, posée sur le filet
 
 
 class ChatItem(QWidget):
     def __init__(self, text: str, ts: datetime | None = None, speaker: str | None = None,
                  show_header: bool = True, show_ts: bool = True, seq: int | None = None,
-                 parent=None):
+                 name: str | None = None, parent=None):
+        """`speaker` est l'étiquette du moteur — elle porte la couleur et reste
+        stable ; `name` est le nom donné par l'utilisateur, qui n'est qu'un
+        affichage. Les confondre ferait changer la couleur d'un locuteur au
+        moment où on le nomme."""
         super().__init__(parent)
         self._text = text
         self._ts = ts or datetime.now()
         self._speaker = speaker
+        self._name = name
+        self._marked = False
         self._show_header = show_header
         self._show_ts = show_ts
         self.seq = seq  # permet à LiveTab de remplacer le texte corrigé
@@ -61,7 +68,7 @@ class ChatItem(QWidget):
         # étiquette de partition, pas un titre.
         self.speaker_label: QLabel | None = None
         if speaker and show_header:
-            self.speaker_label = QLabel(speaker.upper())
+            self.speaker_label = QLabel((name or speaker).upper())
             self.speaker_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.text_label = QLabel(self._text)
@@ -87,6 +94,23 @@ class ChatItem(QWidget):
 
         self.apply_theme()
         self._fade_in()
+
+    def set_speaker_name(self, name: str | None) -> None:
+        """Change le nom **affiché** du locuteur, jamais son étiquette."""
+        self._name = name
+        if self.speaker_label is not None and self._speaker:
+            self.speaker_label.setText((name or self._speaker).upper())
+
+    def set_marked(self, marked: bool) -> None:
+        """Marque (ou démarque) ce moment sur la ligne de temps."""
+        if marked == self._marked:
+            return
+        self._marked = marked
+        self.update()
+
+    @property
+    def marked(self) -> bool:
+        return self._marked
 
     def set_text(self, text: str) -> None:
         """Remplace le texte affiché (correction LLM asynchrone)."""
@@ -126,6 +150,20 @@ class ChatItem(QWidget):
                 painter.drawRoundedRect(
                     _STEM_X, stem_top, 2, stem_bottom - stem_top, 1, 1
                 )
+
+        if self._marked:
+            # Un moment marqué est une **encoche sur la ligne de temps**, pas une
+            # icône à côté du texte : la marge dit déjà quand et qui, elle est
+            # l'endroit juste pour dire « ça ». Peinte en encre et non en rouge —
+            # le rouge ne signifie que le direct, et une marque survit à la
+            # réunion. On perce le filet pour que l'encoche s'y inscrive au lieu
+            # de flotter dessus.
+            y = self._first_line_y()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(t.paper))
+            painter.drawEllipse(QPointF(_SPINE_X, y), _MARK_RADIUS + 2, _MARK_RADIUS + 2)
+            painter.setBrush(QColor(t.ink))
+            painter.drawEllipse(QPointF(_SPINE_X, y), _MARK_RADIUS, _MARK_RADIUS)
         painter.end()
 
     def _first_line_y(self) -> int:

@@ -8,12 +8,14 @@ d'origine (repérée par `seq`) au lieu de s'ajouter en double.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -24,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from benji import search
+from benji import meetings, search
 from benji.stt.postprocessing import join_words
 from benji.ui.style import (
     FONT_UI,
@@ -37,6 +39,8 @@ from benji.ui.style import (
 from benji.ui.widgets.chat_item import ChatItem
 from benji.ui.widgets.partial_bubble import PartialBubble
 from benji.ui.widgets.waveform import WaveformDot
+
+log = logging.getLogger(__name__)
 
 # Largeur de lecture confortable (mesure ~75 caractères à 15px).
 _MAX_CONTENT_WIDTH = 720
@@ -136,6 +140,11 @@ class LiveTab(QWidget):
         self._last_speaker: str | None = None
         self._last_time: datetime | None = None
         self._last_minute: str | None = None
+        # Noms donnés aux locuteurs pendant la réunion (étiquette → nom).
+        self._speaker_names: dict[str, str] = {}
+        # Rappel d'apprentissage du glossaire, posé par la fenêtre principale.
+        # None = pas de moteur local à qui parler (mode remote).
+        self._on_learn_term = None
         # Derniers items encore remplaçables par une correction (seq → item).
         self._correctable: list[ChatItem] = []
         self._build_ui()
@@ -233,6 +242,7 @@ class LiveTab(QWidget):
         self.customContextMenuRequested.connect(self._open_context_menu)
         QShortcut(QKeySequence("Ctrl+F"), self, self.toggle_search)
         QShortcut(QKeySequence("Ctrl+Shift+C"), self, self.copy_transcript)
+        QShortcut(QKeySequence("Ctrl+M"), self, self.mark_moment)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self.search_field, self.close_search)
 
         self.apply_theme()
@@ -316,7 +326,8 @@ class LiveTab(QWidget):
             self._last_minute = minute
 
         item = ChatItem(text, ts=now, speaker=speaker,
-                        show_header=new_group, show_ts=show_ts, seq=seq)
+                        show_header=new_group, show_ts=show_ts, seq=seq,
+                        name=self._speaker_names.get(speaker) if speaker else None)
         self.content_layout.addWidget(item)
         self._last_speaker = speaker
         self._last_time = now
@@ -468,7 +479,9 @@ class LiveTab(QWidget):
             if not item.isVisible() and self.search_bar.isVisible():
                 continue
             stamp = item._ts.strftime("%H:%M")
-            who = f"{item._speaker} : " if item._speaker else ""
+            # Le nom donné, pas l'étiquette du moteur : on colle « Alice », pas
+            # « SPEAKER_01 », dans un compte rendu qui part à quelqu'un.
+            who = f"{item._name or item._speaker} : " if item._speaker else ""
             lines.append(f"[{stamp}] {who}{item._text}")
         return "\n".join(lines)
 
@@ -477,8 +490,138 @@ class LiveTab(QWidget):
         if text:
             QGuiApplication.clipboard().setText(text)
 
+    # --- Marquer un moment -------------------------------------------------
+    def mark_moment(self) -> bool:
+        """« Là, c'est important. » Marque la dernière chose dite.
+
+        C'est le geste qu'on fait vraiment en réunion, et la ligne de temps le
+        portait déjà à moitié : elle dit le quand et le qui, il ne lui manquait
+        que le *ça*. On marque la **dernière ligne**, jamais la suivante : on
+        réagit à ce qu'on vient d'entendre.
+        """
+        items = self._items()
+        if not items:
+            return False
+        items[-1].set_marked(True)
+        try:
+            meetings.add_mark()
+        except Exception:
+            # Marquer est un confort : un registre indisponible laisse la marque
+            # à l'écran pour la réunion en cours plutôt que d'interrompre.
+            log.exception("Marque non persistée")
+        return True
+
+    # --- Glossaire qui s'apprend -----------------------------------------
+    def set_learn_handler(self, handler) -> None:
+        """`handler(terme) -> bool` : persiste le terme et l'arme sur le moteur."""
+        self._on_learn_term = handler
+
+    def learn_term(self, suggestion: str = "") -> None:
+        """Apprend un terme depuis le transcript, là où on voit la faute.
+
+        Le glossaire est le seul levier restant sur les noms propres, mais il
+        fallait aller le saisir dans les Préférences — au moment précis où l'on
+        n'y pense pas. Ici, on vient de lire « data dogue » : c'est le bon moment.
+        """
+        if self._on_learn_term is None:
+            return
+        term, ok = QInputDialog.getText(
+            self, "Ajouter au glossaire",
+            "Terme correct (nom de client, de projet, jargon) :",
+            text=suggestion.strip(),
+        )
+        term = term.strip()
+        if not ok or not term:
+            return
+        try:
+            self._on_learn_term(term)
+        except Exception:
+            log.exception("Terme du glossaire non enregistré")
+            return
+        self._reapply_lexicon()
+
+    def _reapply_lexicon(self) -> None:
+        """Relit les lignes affichées avec le glossaire à jour.
+
+        Sans ça, le terme qu'on vient d'apprendre ne corrigerait que les phrases
+        suivantes — et la faute qu'on regardait resterait à l'écran.
+        """
+        from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
+
+        try:
+            compiled = compile_terms(load_terms())
+        except Exception:
+            log.exception("Glossaire illisible")
+            return
+        for item in self._items():
+            corrected = apply_lexicon(item._text, compiled)
+            if corrected != item._text:
+                item.set_text(corrected)
+
+    # --- Nommer les locuteurs --------------------------------------------
+    def _item_at(self, pos) -> ChatItem | None:
+        """Le ChatItem sous le curseur, en remontant depuis le widget touché."""
+        widget = self.childAt(pos)
+        while widget is not None and widget is not self:
+            if isinstance(widget, ChatItem):
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def rename_speaker(self, label: str) -> None:
+        """Donne un nom à un locuteur — pendant la réunion, quand on sait qui parle.
+
+        Trois jours plus tard, plus personne ne se souvient de qui était
+        « SPEAKER_01 » : c'est ici que le renommage a de la valeur, pas dans la
+        fenêtre Réunions. Le nom est porté par la réunion (`benji/meetings.py`),
+        donc il vaut aussi pour la relecture et l'export.
+        """
+        current = self._speaker_names.get(label, "")
+        name, ok = QInputDialog.getText(
+            self, "Nommer le locuteur", f"Nom pour « {label} » :", text=current
+        )
+        if not ok:
+            return
+        self.set_speaker_name(label, name.strip())
+        try:
+            meetings.name_speaker(label, name.strip())
+        except Exception:
+            # Nommer est un confort : un registre indisponible ne doit pas
+            # remonter une erreur en pleine réunion. L'affichage reste juste.
+            log.exception("Nom de locuteur non persisté")
+
+    def set_speaker_name(self, label: str, name: str) -> None:
+        """Applique un nom aux lignes déjà affichées et à celles qui viendront."""
+        if name:
+            self._speaker_names[label] = name
+        else:
+            self._speaker_names.pop(label, None)
+        for item in self._items():
+            if item._speaker == label:
+                item.set_speaker_name(name or None)
+
     def _open_context_menu(self, pos) -> None:
         menu = QMenu(self)
+        item = self._item_at(pos)
+        if item is not None and item._speaker:
+            label = item._speaker
+            rename = menu.addAction(f"Nommer « {label} »…")
+            rename.triggered.connect(lambda: self.rename_speaker(label))
+            menu.addSeparator()
+        mark = menu.addAction("Marquer ce moment")
+        mark.setEnabled(bool(self._items()))
+        mark.triggered.connect(self.mark_moment)
+        menu.addSeparator()
+        if self._on_learn_term is not None:
+            selection = ""
+            if item is not None:
+                selection = item.text_label.selectedText().strip()
+            learn = menu.addAction(
+                f"Ajouter « {selection} » au glossaire…" if selection
+                else "Ajouter un terme au glossaire…"
+            )
+            learn.triggered.connect(lambda: self.learn_term(selection))
+            menu.addSeparator()
         copy = menu.addAction("Copier le transcript")
         copy.setEnabled(bool(self._items()))
         copy.triggered.connect(self.copy_transcript)

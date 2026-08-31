@@ -107,6 +107,7 @@ def build_tray(
     is_paused=None,
     stats=None,
     stt_config=None,
+    mark_moment=None,
     save_meeting=None,
     is_saving=None,
     on_new_meeting=None,
@@ -148,6 +149,22 @@ def build_tray(
             menu.aboutToShow.connect(lambda: _refresh_pause_text(bool(is_paused())))
         menu.addAction(pause_action)
         menu.addSeparator()
+
+    if mark_moment is not None:
+        mark_action = QAction("Marquer ce moment", menu)
+
+        def _mark() -> None:
+            # En visio, le focus est sur Teams ou Zoom : c'est ici (et par le
+            # raccourci global) que le geste est réellement à portée.
+            marked = mark_moment()
+            tray.showMessage(
+                "Benji", "Moment marqué." if marked
+                else "Rien à marquer — aucune phrase transcrite pour l'instant.",
+                QSystemTrayIcon.MessageIcon.Information,
+            )
+
+        mark_action.triggered.connect(_mark)
+        menu.addAction(mark_action)
 
     if save_meeting is not None:
         save_action = QAction("Conserver cette réunion", menu)

@@ -138,3 +138,49 @@ def test_termes_longs_essayes_avant_les_courts():
 
 def test_texte_vide():
     assert apply_lexicon("", compile_terms(["Datadog"])) == ""
+
+
+# --- glossaire nourri depuis le transcript ---
+
+
+def test_un_terme_appris_est_persiste(tmp_path):
+    """Le glossaire est le seul levier sur les noms propres, mais il fallait
+    aller le saisir dans les Préférences — au moment où on n'y pense pas."""
+    path = tmp_path / "glossary.txt"
+    path.write_text("Datadog\n", encoding="utf-8")
+
+    assert lexicon.add_term("Kubernetes", path) is True
+    assert lexicon.load_terms(path) == ["Datadog", "Kubernetes"]
+
+
+def test_un_terme_deja_connu_nest_pas_ajoute_deux_fois(tmp_path):
+    path = tmp_path / "glossary.txt"
+    path.write_text("Datadog\n", encoding="utf-8")
+
+    assert lexicon.add_term("datadog", path) is False
+    assert lexicon.load_terms(path) == ["Datadog"]
+
+
+def test_un_terme_vide_est_refuse(tmp_path):
+    path = tmp_path / "glossary.txt"
+
+    assert lexicon.add_term("   ", path) is False
+    assert not path.exists()
+
+
+def test_le_terme_appris_ne_fuite_pas_dans_les_logs(tmp_path, caplog):
+    """Il nomme un client ou un projet — et le log part dans les rapports."""
+    import logging
+
+    path = tmp_path / "glossary.txt"
+    with caplog.at_level(logging.DEBUG):
+        lexicon.add_term("Groupe Bertrand", path)
+
+    assert "Bertrand" not in caplog.text
+
+
+def test_un_glossaire_appris_est_ecrit_en_0600(tmp_path):
+    path = tmp_path / "glossary.txt"
+    lexicon.add_term("Datadog", path)
+
+    assert (path.stat().st_mode & 0o777) == 0o600

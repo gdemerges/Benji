@@ -107,3 +107,80 @@ def test_end_current_meeting_horodate_la_fin():
 
     assert meetings.store().get(meeting.id).ended_at is not None
     assert meetings.current_meeting_id() is None
+
+
+# --- noms de locuteurs et moments marqués ---
+
+
+def test_un_locuteur_nomme_le_reste_dune_relecture_a_lautre(tmp_path):
+    """Nommé pendant la réunion, quand on sait encore qui parle : trois jours
+    plus tard, plus personne ne se souvient de qui était « SPEAKER_01 »."""
+    store = meetings.MeetingStore(path=tmp_path / "meetings.json")
+    meeting = store.start("Point produit")
+
+    store.name_speaker(meeting.id, "SPEAKER_01", "Alice")
+
+    assert store.get(meeting.id).speakers == {"SPEAKER_01": "Alice"}
+
+
+def test_un_nom_vide_denomme_le_locuteur(tmp_path):
+    store = meetings.MeetingStore(path=tmp_path / "meetings.json")
+    meeting = store.start()
+    store.name_speaker(meeting.id, "A", "Alice")
+
+    store.name_speaker(meeting.id, "A", "")
+
+    assert store.get(meeting.id).speakers == {}
+
+
+def test_un_registre_ecrit_avant_les_noms_reste_lisible(tmp_path):
+    """Absent n'est pas invalide : une ligne sans `speakers` ni `marks` doit
+    continuer de se charger, sinon une mise à jour perdrait tout l'historique."""
+    path = tmp_path / "meetings.json"
+    path.write_text(
+        '[{"id": "abc", "title": "Ancienne", "started_at": "2026-08-01T10:00:00",'
+        ' "ended_at": null}]',
+        encoding="utf-8",
+    )
+    store = meetings.MeetingStore(path=path)
+
+    meeting = store.get("abc")
+    assert meeting is not None
+    assert meeting.speakers == {}
+    assert meeting.marks == []
+
+
+def test_un_moment_marque_survit_a_la_reunion(tmp_path):
+    from datetime import datetime
+
+    store = meetings.MeetingStore(path=tmp_path / "meetings.json")
+    meeting = store.start()
+    at = datetime(2026, 8, 31, 14, 32, 10)
+
+    store.add_mark(meeting.id, at)
+    store.add_mark(meeting.id, at)  # deux fois le même instant = une marque
+
+    assert store.get(meeting.id).marks == [at]
+
+
+def test_une_marque_designe_ce_qui_vient_detre_dit():
+    """On marque en réaction : la marque tombe *après* la phrase visée."""
+    from datetime import datetime
+
+    entries = [
+        {"timestamp": "2026-08-31T14:00:00", "text": "Premier point."},
+        {"timestamp": "2026-08-31T14:05:00", "text": "Le chiffre important."},
+        {"timestamp": "2026-08-31T14:09:00", "text": "Autre chose."},
+    ]
+    marks = [datetime(2026, 8, 31, 14, 5, 20)]
+
+    assert meetings.marked_indices(entries, marks) == {1}
+
+
+def test_une_marque_anterieure_au_transcript_naccroche_rien():
+    """Plutôt que de décorer la première phrase venue."""
+    from datetime import datetime
+
+    entries = [{"timestamp": "2026-08-31T14:00:00", "text": "Premier point."}]
+
+    assert meetings.marked_indices(entries, [datetime(2026, 8, 31, 13, 0)]) == set()
