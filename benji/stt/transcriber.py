@@ -10,6 +10,7 @@ from benji.config import STTConfig
 
 log = logging.getLogger(__name__)
 from benji.history import TranscriptionHistory
+from benji.recording import RecordingConsent
 from benji.stats import SessionStats
 from benji.stt.backend import build_backend, build_final_backend
 from benji.stt.diarization import build_tagger, label_windows, split_by_speaker
@@ -30,6 +31,12 @@ class Transcriber:
         self.display_queue = display_queue
         self.config = config or STTConfig()
         self.history = TranscriptionHistory()
+        # Toute écriture passe par le portillon : le direct s'affiche toujours,
+        # le disque attend l'accord de l'utilisateur (cf. benji/recording.py).
+        # `self.history` reste le magasin — c'est lui qu'on relit pour l'export.
+        self.consent = RecordingConsent(
+            self.history, armed=not self.config.confirm_before_saving
+        )
         self.stats = stats
         self.sample_rate = sample_rate
 
@@ -300,7 +307,7 @@ class Transcriber:
                 # DEBUG et pas INFO : le log est persisté sur disque et joint aux
                 # rapports de bug — le contenu transcrit ne doit pas y fuiter.
                 log.debug('%s"%s"', f"[{speaker}] " if speaker else "", text)
-                self.history.add(text, speaker=speaker)
+                self.consent.add(text, speaker=speaker)
 
         # Stats
         if self.stats is not None:
@@ -389,7 +396,7 @@ class Transcriber:
             # Corrector saturated: keep the raw text (already displayed) and
             # persist it now so history has exactly one entry for this segment.
             log.warning("LLM corrector saturated; kept raw text")
-            self.history.add(text, speaker=speaker)
+            self.consent.add(text, speaker=speaker)
 
     def _corrector_loop(self) -> None:
         """Background worker: correct queued finals and emit replacements.
@@ -409,7 +416,7 @@ class Transcriber:
             except Exception as e:
                 log.warning("LLM correction skipped: %s", e)
                 corrected = text
-            self.history.add(corrected, speaker=speaker)
+            self.consent.add(corrected, speaker=speaker)
             log.debug('%s"%s"', f"[{speaker}] " if speaker else "", corrected)
             self._emit_final(corrected, speaker, seq=seq, corrected=True)
 

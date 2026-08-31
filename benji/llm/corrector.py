@@ -54,7 +54,8 @@ def correct(text: str, language: str | None = "fr") -> str:
         return text
 
     try:
-        from mlx_lm import generate
+        from benji.llm import mlx_runner
+
         lang = "français" if language in (None, "fr") else language
         messages = [
             {
@@ -70,7 +71,9 @@ def correct(text: str, language: str | None = "fr") -> str:
         prompt = _tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        output = generate(_model, _tokenizer, prompt=prompt, max_tokens=len(text) + 50, verbose=False)
+        # Génération sur le fil MLX (cf. benji/llm/mlx_runner.py) : le thread STT
+        # d'où l'on vient n'a pas le droit de toucher au stream de mlx-lm.
+        output = mlx_runner.generate(_model, _tokenizer, prompt, len(text) + 50)
         corrected = output.strip().strip('"').strip()
         # Safety: reject if the model invented a much longer response
         if not corrected or len(corrected) > 2 * len(text) + 40:

@@ -99,9 +99,7 @@ def suggest_title(entries: list[dict]) -> str:
     if not text.strip():
         return ""
     try:
-        from mlx_lm import generate
-
-        from benji.llm import model_cache
+        from benji.llm import mlx_runner, model_cache
         from benji.llm.summarizer import MODEL_ID
 
         model, tokenizer = model_cache.load(MODEL_ID)
@@ -112,7 +110,7 @@ def suggest_title(entries: list[dict]) -> str:
         prompt = tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        raw = generate(model, tokenizer, prompt=prompt, max_tokens=24, verbose=False)
+        raw = mlx_runner.generate(model, tokenizer, prompt, 24)
     except Exception as e:
         log.warning("Titre automatique indisponible (%s)", e)
         return ""

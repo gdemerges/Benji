@@ -13,6 +13,7 @@ import pytest
 
 import benji.stt.transcriber as transcriber_mod
 from benji.config import STTConfig
+from benji.recording import RecordingConsent
 from benji.stt.transcriber import Transcriber
 
 SR = 16000
@@ -50,6 +51,9 @@ def _make(monkeypatch, scripts, **cfg) -> tuple[Transcriber, FakeBackend]:
     # Whisper. None = « réutilise le moteur des partielles ».
     monkeypatch.setattr(transcriber_mod, "build_final_backend", lambda *a, **kw: None)
     cfg.setdefault("diarization", False)  # ces tests pilotent le tagger explicitement
+    # Ces tests portent sur le décodage, pas sur l'accord de conservation : on
+    # ouvre le portillon d'office (cf. benji/recording.py, testé à part).
+    cfg.setdefault("confirm_before_saving", False)
     t = Transcriber(Queue(), Queue(), STTConfig(**cfg), stats=None, sample_rate=SR)
     return t, backend
 
@@ -396,7 +400,10 @@ def test_le_glossaire_corrige_le_texte_final(monkeypatch):
     t, _ = _make(monkeypatch, [[("On", 0.0, 0.2), ("déploie", 0.2, 0.6),
                                 ("kubernétesse", 0.6, 1.2)]])
     t._lexicon = lexicon.compile_terms(["Kubernetes"])
+    # Le magasin est derrière le portillon de conservation : le remplacer seul
+    # laisserait les écritures partir dans le vrai historique.
     t.history = _FakeHistory()
+    t.consent = RecordingConsent(t.history, armed=True)
 
     t._run_segment(_audio(1.2), is_final=True)
 
@@ -565,3 +572,21 @@ def test_segment_start_annonce_un_nouvel_enonce_pas_un_rafraichissement(monkeypa
 
     starts = [e for e in _drain(t.display_queue) if e["type"] == "segment_start"]
     assert len(starts) == 1
+
+
+def test_le_transcripteur_affiche_sans_conserver_avant_laccord(monkeypatch):
+    """Le direct ne dépend jamais de l'accord : ce qui change, c'est le disque."""
+    t, _ = _make(monkeypatch, [[("bonjour", 0.0, 0.4), ("monde", 0.4, 0.8)]],
+                 confirm_before_saving=True)
+    t.history = _FakeHistory()
+    t.consent = RecordingConsent(t.history)
+
+    t._run_segment(_audio(1.0), is_final=True)
+
+    finals = [e for e in _drain(t.display_queue) if e.get("type") == "final_text"]
+    assert finals and finals[0]["text"] == "Bonjour monde"  # affiché
+    assert t.history.added == []                            # pas conservé
+    assert t.consent.pending_count == 1                     # mais pas perdu
+
+    assert t.consent.arm() == 1
+    assert t.history.added == [("Bonjour monde", None)]

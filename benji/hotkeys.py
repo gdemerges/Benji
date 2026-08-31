@@ -184,15 +184,30 @@ class GlobalHotkeys:
         try:
             path = ctypes.util.find_library("Carbon")
             carbon = ctypes.CDLL(path)
+            # Toute fonction appelée ici doit déclarer ses `argtypes` : sans
+            # eux, ctypes passe un pointeur Python en `c_int` et rabote les 32
+            # bits de poids fort. Carbon déréférence alors une demi-adresse et
+            # le process meurt sur SIGSEGV, sans exception à rattraper.
+            carbon.GetApplicationEventTarget.argtypes = []
             carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
             carbon.RegisterEventHotKey.argtypes = [
                 ctypes.c_uint32, ctypes.c_uint32, _EventHotKeyID,
                 ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p),
             ]
+            carbon.RegisterEventHotKey.restype = ctypes.c_int32
+            carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+            carbon.UnregisterEventHotKey.restype = ctypes.c_int32
+            carbon.InstallEventHandler.argtypes = [
+                ctypes.c_void_p, _HANDLER, ctypes.c_ulong,
+                ctypes.POINTER(_EventTypeSpec), ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
+            carbon.InstallEventHandler.restype = ctypes.c_int32
             carbon.GetEventParameter.argtypes = [
                 ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
                 ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p,
             ]
+            carbon.GetEventParameter.restype = ctypes.c_int32
         except Exception as e:
             log.warning("Carbon indisponible — pas de raccourci global (%s)", e)
             return None
@@ -203,12 +218,18 @@ class GlobalHotkeys:
         """Un seul gestionnaire pour tous les raccourcis, posé au premier."""
         if self._handler is not None:
             return
-        self._handler = _HANDLER(self._dispatch)
+        handler = _HANDLER(self._dispatch)
         spec = _EventTypeSpec(_EVENT_CLASS_KEYBOARD, _EVENT_HOTKEY_PRESSED)
-        carbon.InstallEventHandler(
-            carbon.GetApplicationEventTarget(), self._handler,
-            ctypes.c_uint32(1), ctypes.byref(spec), None, None,
+        status = carbon.InstallEventHandler(
+            carbon.GetApplicationEventTarget(), handler,
+            1, ctypes.byref(spec), None, None,
         )
+        if status != 0:
+            raise OSError(f"InstallEventHandler a échoué (statut {status})")
+        # Assigné seulement en cas de succès : un handler mémorisé alors que
+        # Carbon ne l'a pas pris ferait croire à `register()` que le câblage est
+        # posé, et le raccourci suivant ne réessaierait jamais.
+        self._handler = handler
 
     def _dispatch(self, _next_handler, event, _user_data) -> int:
         """Appelé par Carbon sur le thread principal, à chaque frappe réservée."""

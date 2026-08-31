@@ -396,6 +396,48 @@ class BenjiApplication:
             audio_config=self.cfg.audio,
         ).exec()
 
+    @property
+    def _consent(self):
+        """Portillon de conservation du transcripteur, s'il y en a un.
+
+        Absent en mode remote (pas de transcripteur local) et quand
+        `confirm_before_saving` est désactivé — dans ce cas rien n'est à demander.
+        """
+        consent = getattr(getattr(self, "transcriber", None), "consent", None)
+        if consent is None or consent.armed:
+            return None
+        return consent
+
+    @property
+    def _has_consent_gate(self) -> bool:
+        return getattr(getattr(self, "transcriber", None), "consent", None) is not None
+
+    def _is_saving(self) -> bool:
+        consent = getattr(getattr(self, "transcriber", None), "consent", None)
+        return bool(consent.armed) if consent is not None else True
+
+    def _on_new_meeting(self) -> None:
+        """Nouvelle réunion : l'accord est à redemander, le bandeau revient."""
+        consent = getattr(getattr(self, "transcriber", None), "consent", None)
+        if consent is None:
+            return
+        consent.reset(armed=not self.cfg.stt.confirm_before_saving)
+        if self.main_window is not None:
+            self.main_window.live_tab.set_consent_pending(not consent.armed)
+
+    def _save_meeting(self) -> int:
+        """Accorde la conservation de la réunion en cours. Retourne le versé.
+
+        Appelable depuis la fenêtre **ou** le tray : c'est ici que l'état est
+        unifié, sinon accorder depuis le menu laisserait le bandeau de la
+        fenêtre affirmer le contraire.
+        """
+        consent = self._consent
+        versees = consent.arm() if consent is not None else 0
+        if self.main_window is not None:
+            self.main_window.live_tab.set_consent_pending(False)
+        return versees
+
     def toggle_pause(self) -> bool:
         """Bascule la pause micro. Retourne le nouvel état (True = en pause).
 
@@ -444,6 +486,7 @@ class BenjiApplication:
             on_minimize=lambda: self.controller.show_overlay() if self.controller else None,
             on_open_preferences=self._open_preferences,
             on_toggle_pause=self.toggle_pause,
+            on_save_meeting=self._save_meeting if self._consent is not None else None,
             session=self.session,
             backend_url=self.cfg.llm.backend_url,
         )
@@ -465,6 +508,9 @@ class BenjiApplication:
             is_paused=lambda: self.capture.is_paused,
             stats=self.stats,
             stt_config=self.cfg.stt,
+            save_meeting=self._save_meeting if self._has_consent_gate else None,
+            is_saving=self._is_saving,
+            on_new_meeting=self._on_new_meeting,
         )
 
         # Optional: rolling live summary.

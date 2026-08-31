@@ -41,6 +41,9 @@ PREFS: tuple[PrefSpec, ...] = (
     PrefSpec("language", "stt", "language", str, nullable=True, restart=True),
     PrefSpec("diarization", "stt", "diarization", bool, restart=True),
     PrefSpec("live_summary_interval_s", "stt", "live_summary_interval_s", int, restart=True),
+    # Écouter et garder ne sont pas le même geste (cf. benji/recording.py). Prend
+    # effet au démarrage : le portillon est posé à la construction du moteur.
+    PrefSpec("confirm_before_saving", "stt", "confirm_before_saving", bool, restart=True),
     # --- Moteurs local/cloud (redémarrage requis) ---
     # "remote" = via le backend Benji (abonnement Pro) — cf. STTConfig/LLMConfig.
     PrefSpec("stt_provider", "stt", "stt_provider", str, restart=True),

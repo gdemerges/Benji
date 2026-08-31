@@ -21,6 +21,14 @@ _lock = threading.Lock()
 _cache: dict[str, tuple] = {}
 
 
+def _mlx_load(model_id: str) -> tuple:
+    """Import **et** chargement, tous deux sur le fil MLX : `mlx_lm` crée son
+    stream de génération à l'import, qui appartient donc au thread importateur."""
+    from mlx_lm import load as mlx_load
+
+    return mlx_load(model_id)
+
+
 def load(model_id: str) -> tuple:
     """Renvoie `(model, tokenizer)` pour *model_id*, en le chargeant au besoin.
 
@@ -35,11 +43,14 @@ def load(model_id: str) -> tuple:
         cached = _cache.get(model_id)
         if cached is not None:
             return cached
-        from mlx_lm import load as mlx_load
+        from benji.llm import mlx_runner
 
         log.info("Chargement du modèle '%s'...", model_id)
         log.info("(Le premier lancement télécharge le modèle, ~800 Mo)")
-        loaded = mlx_load(model_id)
+        # Chargé **sur le fil MLX**, comme les générations qui suivront : MLX lie
+        # les tableaux au thread qui les évalue en premier, et des poids chargés
+        # ailleurs seraient inutilisables (cf. benji/llm/mlx_runner.py).
+        loaded = mlx_runner.run(_mlx_load, model_id)
         _cache[model_id] = loaded
         log.info("Modèle '%s' prêt", model_id)
         return loaded

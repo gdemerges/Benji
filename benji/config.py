@@ -99,6 +99,12 @@ class STTConfig:
     # local déjà chargé (cf. benji/llm/titler.py). Un titre choisi à la main
     # n'est jamais écrasé. False = les réunions gardent leur horodatage.
     auto_title: bool = True
+    # Écouter et garder ne sont pas le même geste. Benji transcrit dès le
+    # lancement (on n'a jamais « oublié de lancer l'enregistrement »), mais rien
+    # n'est écrit sur disque tant que l'utilisateur ne l'a pas accordé — ce qui a
+    # déjà été dit est versé à ce moment-là, pas perdu (cf. benji/recording.py).
+    # False = tout est conservé d'office, le comportement d'avant.
+    confirm_before_saving: bool = True
     # Audio gain control before STT: peak-normalize quiet segments to this target.
     # 0.0 disables. Useful for low-gain microphones.
     agc_target_peak: float = 0.7

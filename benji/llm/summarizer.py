@@ -11,6 +11,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 MODEL_ID = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+MAX_TOKENS = 512
 
 def _get_model():
     """Modèle partagé avec le correcteur (cf. benji/llm/model_cache.py) : même
@@ -90,10 +91,12 @@ def summarize(
         return None
 
     try:
-        from mlx_lm import generate, stream_generate
+        import mlx_lm  # noqa: F401 — présence seule ; l'usage est sur le fil MLX
     except ImportError:
         log.warning("mlx-lm non installé. Exécute : uv sync")
         return None
+
+    from benji.llm import mlx_runner
 
     model, tokenizer = _get_model()
 
@@ -101,10 +104,20 @@ def summarize(
     prompt = _build_prompt(tokenizer, transcription_text)
 
     if on_token is None:
-        return generate(model, tokenizer, prompt=prompt, max_tokens=512, verbose=False).strip()
+        return mlx_runner.generate(model, tokenizer, prompt, MAX_TOKENS).strip()
+
+    # La boucle entière part sur le fil MLX : `stream_generate` ouvre le stream
+    # de mlx-lm à chaque itération, pas seulement au premier appel. `on_token`
+    # est donc appelé depuis ce fil — les appelants n'en font qu'un signal Qt.
+    return mlx_runner.run(_stream, model, tokenizer, prompt, on_token)
+
+
+def _stream(model, tokenizer, prompt: str, on_token: Callable[[str], None]) -> str:
+    """Exécutée *sur* le fil MLX (cf. benji/llm/mlx_runner.py)."""
+    from mlx_lm import stream_generate
 
     chunks: list[str] = []
-    for response in stream_generate(model, tokenizer, prompt=prompt, max_tokens=512):
+    for response in stream_generate(model, tokenizer, prompt=prompt, max_tokens=MAX_TOKENS):
         # mlx_lm.stream_generate yields a `GenerationResponse` with a `.text` field
         # (incremental text since the previous yield).
         piece = getattr(response, "text", None) or str(response)

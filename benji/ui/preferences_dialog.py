@@ -153,6 +153,15 @@ class PreferencesDialog(QDialog):
         self._diarization.setChecked(bool(self._stt.diarization))
         stt_form.addRow("Diarisation", self._diarization)
 
+        self._confirm_saving = QCheckBox("Demander avant de conserver une réunion")
+        self._confirm_saving.setChecked(bool(self._stt.confirm_before_saving))
+        self._confirm_saving.setToolTip(
+            "Benji transcrit dès le lancement, mais n'écrit rien sur disque tant "
+            "que vous ne l'avez pas accordé. Ce qui a déjà été dit est conservé "
+            "au moment de l'accord, pas perdu."
+        )
+        stt_form.addRow("Conservation", self._confirm_saving)
+
         self._summary = QComboBox()
         for secs, label in _SUMMARY_INTERVALS:
             self._summary.addItem(label, secs)
@@ -480,6 +489,9 @@ class PreferencesDialog(QDialog):
         s.set_value("language", language)
         s.set_value("diarization", diarization)
         s.set_value("live_summary_interval_s", summary_interval)
+        confirm_saving = self._confirm_saving.isChecked()
+        s.set_value("confirm_before_saving", confirm_saving)
+        self._stt.confirm_before_saving = confirm_saving
         # Le glossaire n'est pas une préférence QSettings : c'est un fichier de
         # données utilisateur, écrit en 0600 comme l'historique.
         lexicon.save_glossary(self._glossary.toPlainText())

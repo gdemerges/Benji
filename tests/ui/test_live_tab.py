@@ -209,3 +209,137 @@ def test_remonter_dans_le_transcript_suspend_le_defilement(qtbot):
     tab.on_event(_final("Encore une phrase.", "A", 101))
     qtbot.wait(50)
     assert sb.value() == sb.maximum()
+
+
+def test_le_bouton_de_retour_au_direct_napparait_que_decroche(qtbot):
+    """Le défilement automatique laissait sans issue : rien ne disait qu'on ne
+    suivait plus, et il fallait redescendre à la main."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    _fill_past_the_fold(tab, qtbot)
+    assert not tab.jump_btn.isVisible()
+
+    sb = tab.scroll.verticalScrollBar()
+    sb.setValue(0)
+    assert tab.jump_btn.isVisible()
+
+    tab.jump_btn.click()
+    qtbot.wait(50)
+    assert sb.value() == sb.maximum()
+    assert not tab.jump_btn.isVisible()
+
+
+def test_la_recherche_filtre_le_transcript_en_cours(qtbot):
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("On parle du budget client.", "Alice", 1))
+    tab.on_event(_final("Rien à voir avec ce sujet.", "Bob", 2))
+
+    tab.toggle_search()
+    tab.search_field.setText("budget")
+
+    visibles = [i for i in _items(tab) if i.isVisible()]
+    assert [i._text for i in visibles] == ["On parle du budget client."]
+    assert "1 sur 2" in tab.search_count.text()
+
+    # Fermer rend le transcript entier — jamais un filtre orphelin.
+    tab.close_search()
+    assert all(i.isVisible() for i in _items(tab))
+
+
+def test_la_recherche_trouve_par_locuteur(qtbot):
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("Le point sur le budget.", "Marie", 1))
+    tab.on_event(_final("Le point sur le budget.", "Paul", 2))
+
+    tab.toggle_search()
+    tab.search_field.setText("marie budget")
+
+    assert [i._speaker for i in _items(tab) if i.isVisible()] == ["Marie"]
+
+
+def test_une_phrase_qui_arrive_pendant_une_recherche_est_filtree(qtbot):
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("Budget valide.", "Alice", 1))
+    tab.toggle_search()
+    tab.search_field.setText("budget")
+
+    tab.on_event(_final("Autre chose entierement.", "Bob", 2))
+
+    assert [i._text for i in _items(tab) if i.isVisible()] == ["Budget valide."]
+
+
+def test_chercher_ne_ramene_pas_au_bas_a_la_phrase_suivante(qtbot):
+    """Chercher, c'est relire : le suivi du direct doit lâcher prise."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    _fill_past_the_fold(tab, qtbot)
+    tab.toggle_search()
+    tab.search_field.setText("Ligne 3")
+
+    assert tab._user_scrolled_up
+
+
+def test_copier_le_transcript_rend_un_compte_rendu_lisible(qtbot):
+    """Le transcript est fait de QLabel indépendants : une sélection ne franchit
+    pas la ligne, donc copier tout est le seul geste qui rende le direct
+    exploitable sans quitter la réunion."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("Premier point.", "Alice", 1))
+    tab.on_event(_final("Deuxieme point.", "Bob", 2))
+
+    lignes = tab.transcript_text().splitlines()
+    assert len(lignes) == 2
+    assert lignes[0].endswith("Alice : Premier point.")
+    assert lignes[0].startswith("[") and ":" in lignes[0]
+
+
+def test_la_copie_se_limite_aux_resultats_de_la_recherche(qtbot):
+    """Les actions portent sur ce qui est à l'écran, comme dans Réunions."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    tab.on_event(_final("On parle du budget.", "Alice", 1))
+    tab.on_event(_final("Rien a voir.", "Bob", 2))
+    tab.toggle_search()
+    tab.search_field.setText("budget")
+
+    assert tab.transcript_text().count("\n") == 0
+    assert "budget" in tab.transcript_text()
+
+
+def test_le_bandeau_dit_que_rien_nest_conserve(qtbot):
+    """Un utilisateur qui croit enregistrer alors que non est le pire état."""
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    tab.show()
+    assert not tab.consent.isVisible()  # pas de portillon = pas de bandeau
+
+    tab.set_consent_pending(True)
+    assert tab.consent.isVisible()
+    assert "rien n'est encore conservé" in tab.consent.label.text()
+
+    demandes = []
+    tab.save_requested.connect(lambda: demandes.append(1))
+    tab.consent.button.click()
+    assert demandes == [1]
+
+
+def test_le_bandeau_ne_prend_pas_le_rouge_du_direct(qtbot):
+    """Le rouge ne signifie qu'« on prend au mot, maintenant » — or c'est
+    précisément ce qui n'a pas lieu tant que rien n'est conservé."""
+    from benji.ui.style import current_theme
+
+    tab = LiveTab()
+    qtbot.addWidget(tab)
+    rouge = current_theme().record.name().lower()
+
+    assert rouge not in tab.consent.button.styleSheet().lower()
+    assert rouge not in tab.consent.label.styleSheet().lower()

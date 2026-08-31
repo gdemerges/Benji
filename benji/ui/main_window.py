@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         on_minimize=None,
         on_open_preferences=None,
         on_toggle_pause=None,
+        on_save_meeting=None,
         session=None,
         backend_url: str = "",
         parent=None,
@@ -79,6 +80,9 @@ class MainWindow(QMainWindow):
         self._on_minimize = on_minimize
         self._on_open_preferences = on_open_preferences
         self._on_toggle_pause = on_toggle_pause
+        # Accord de conservation (cf. benji/recording.py) : None = pas de
+        # portillon, tout est conservé d'office et le bandeau ne s'affiche pas.
+        self._on_save_meeting = on_save_meeting
         self._paused = False
         # Contrôleur compte/facturation (login + abonnement Stripe) — présent
         # seulement si une session est fournie. Succès/erreurs via QMessageBox.
@@ -206,11 +210,22 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # === Bus wiring ===
+        self.live_tab.save_requested.connect(self._save_meeting)
+        self.live_tab.set_consent_pending(self._on_save_meeting is not None)
+
         self._bus.event.connect(self.live_tab.on_event)
         self._bus.event.connect(self._update_vad_indicator)
         self._bus.event.connect(self._maybe_refresh_summarize_enabled)
 
         self._refresh_summarize_enabled()
+
+    def _save_meeting(self) -> None:
+        """Accorde la conservation, et le dit — l'accord doit se voir confirmé."""
+        if self._on_save_meeting is None:
+            return
+        versees = self._on_save_meeting()
+        self.live_tab.set_consent_pending(False)
+        log.info("Conservation accordée depuis la fenêtre (%s entrée(s))", versees)
 
     def _apply_theme(self) -> None:
         t = current_theme()

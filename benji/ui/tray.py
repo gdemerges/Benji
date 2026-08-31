@@ -107,6 +107,9 @@ def build_tray(
     is_paused=None,
     stats=None,
     stt_config=None,
+    save_meeting=None,
+    is_saving=None,
+    on_new_meeting=None,
 ) -> QSystemTrayIcon:
     """show_main_window: callable() — when present, adds an 'Afficher fenêtre' item
     that invokes this callback. The caller is expected to route through the
@@ -122,6 +125,12 @@ def build_tray(
 
     stats: benji.stats.SessionStats — joint les métriques (anonymes) au rapport
     de bug. stt_config: STTConfig — y joint la config du moteur.
+
+    save_meeting: callable() -> int — accorde la conservation de la réunion en
+    cours et retourne le nombre d'entrées versées. is_saving: callable() -> bool
+    — état courant, relu à l'ouverture du menu. Le raccourci du tray existe parce
+    que la décision de garder se prend souvent sans quitter la visio, donc sans
+    aller chercher la fenêtre (cf. benji/recording.py).
     """
     tray = QSystemTrayIcon(_make_icon())
     tray.setToolTip("Benji — live subtitles")
@@ -138,6 +147,33 @@ def build_tray(
         if is_paused is not None:
             menu.aboutToShow.connect(lambda: _refresh_pause_text(bool(is_paused())))
         menu.addAction(pause_action)
+        menu.addSeparator()
+
+    if save_meeting is not None:
+        save_action = QAction("Conserver cette réunion", menu)
+
+        def _refresh_save_state() -> None:
+            saving = bool(is_saving()) if is_saving is not None else False
+            save_action.setEnabled(not saving)
+            save_action.setText(
+                "Réunion conservée" if saving else "Conserver cette réunion"
+            )
+
+        def _save() -> None:
+            versees = save_meeting()
+            _refresh_save_state()
+            # Un accord donné hors de la vue doit se voir confirmé : croire
+            # qu'on garde alors que non est le pire des deux états.
+            tray.showMessage(
+                "Benji — réunion conservée",
+                f"{versees} ligne(s) déjà dites ont été versées à l'historique."
+                if versees else "Ce qui suit est écrit dans l'historique.",
+                QSystemTrayIcon.MessageIcon.Information,
+            )
+
+        save_action.triggered.connect(_save)
+        menu.aboutToShow.connect(_refresh_save_state)
+        menu.addAction(save_action)
         menu.addSeparator()
 
     if show_main_window is not None:
@@ -157,6 +193,10 @@ def build_tray(
         from benji import meetings
 
         meeting = meetings.start_meeting()
+        # L'accord de conservation ne se reporte pas d'une réunion à l'autre :
+        # avoir accepté de garder celle de ce matin ne dit rien de la suivante.
+        if on_new_meeting is not None:
+            on_new_meeting()
         if hasattr(history_window, "reload_meetings"):
             history_window.reload_meetings()
         tray.showMessage("Benji — nouvelle réunion", meeting.title,
