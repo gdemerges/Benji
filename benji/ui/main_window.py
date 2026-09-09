@@ -8,8 +8,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,

@@ -7,9 +7,9 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication
+from PySide6.QtWidgets import QWidget
 
 from benji.config import IS_MACOS
 

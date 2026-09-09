@@ -16,8 +16,8 @@ tête-à-tête avec un chemin de fichier.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMarginsF, QSizeF
-from PyQt6.QtGui import QPageLayout, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtCore import QMarginsF, QSizeF
+from PySide6.QtGui import QPageLayout, QPageSize, QPdfWriter, QTextDocument
 
 from benji.ui.style import light_theme, reading_font
 from benji.ui.widgets.markdown_view import apply_heading_margins, markdown_css
@@ -57,4 +57,6 @@ def write_pdf(markdown_text: str, path, title: str = "") -> None:
     # Sans taille de page explicite, le document se compose sur une seule page
     # infiniment haute et le PDF ne contient que le premier écran.
     doc.setPageSize(QSizeF(writer.width(), writer.height()))
-    doc.print(writer)
+    # `print_` et non `print` : PySide6 suffixe les méthodes qui heurtent un
+    # mot-clé Python historique. L'alias sans tiret bas n'existe pas.
+    doc.print_(writer)

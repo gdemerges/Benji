@@ -6,8 +6,8 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QApplication
 
 from benji.ui.main_window import MainWindow
 
@@ -19,14 +19,14 @@ def qapp():
 
 
 class FakeBus(QObject):
-    event = pyqtSignal(object)
+    event = Signal(object)
 
 
 class FakeWorker(QObject):
-    started = pyqtSignal(str)
-    chunk = pyqtSignal(str, str)
-    finished = pyqtSignal(str, object)
-    failed = pyqtSignal(str, str)
+    started = Signal(str)
+    chunk = Signal(str, str)
+    finished = Signal(str, object)
+    failed = Signal(str, str)
 
     def request(self, **k):
         pass

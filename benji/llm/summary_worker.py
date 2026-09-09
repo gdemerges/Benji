@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from queue import Queue
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from benji.llm.providers import LocalSummaryProvider, SummaryProvider
 from benji.llm.summarizer import save_summary
@@ -16,10 +16,10 @@ _STOP_SENTINEL = object()
 
 
 class SummaryWorker(QThread):
-    started = pyqtSignal(str)               # summary_id
-    chunk = pyqtSignal(str, str)            # summary_id, token chunk
-    finished = pyqtSignal(str, object)      # summary_id, Path
-    failed = pyqtSignal(str, str)           # summary_id, error message
+    started = Signal(str)               # summary_id
+    chunk = Signal(str, str)            # summary_id, token chunk
+    finished = Signal(str, object)      # summary_id, Path
+    failed = Signal(str, str)           # summary_id, error message
 
     def __init__(self, provider: SummaryProvider | None = None, parent=None):
         super().__init__(parent)

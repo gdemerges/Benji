@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication
 
 from benji.config import LLMConfig, STTConfig, UIConfig
 from benji.settings import UserSettings

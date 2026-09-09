@@ -11,8 +11,8 @@ reposées sur les `QTextBlockFormat` après rendu (cf. `render_markdown`).
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QTextCursor
-from PyQt6.QtWidgets import QTextBrowser
+from PySide6.QtGui import QTextCursor
+from PySide6.QtWidgets import QTextBrowser
 
 from benji.ui.style import FONT_DISPLAY, FONT_MONO, FONT_READING, FONT_UI, Theme, reading_font
 

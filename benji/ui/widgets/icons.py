@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, Qt
-from PyQt6.QtGui import QIcon, QPainter, QPixmap
-from PyQt6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 
 _DOC_TEXT = """
 <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>

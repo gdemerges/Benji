@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from queue import Empty, Queue
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 log = logging.getLogger(__name__)
 
@@ -26,11 +26,11 @@ _SAFETY_POLL_MS = 250
 
 
 class DisplayBus(QObject):
-    event = pyqtSignal(object)  # le signal porte un dict ou un str
+    event = Signal(object)  # le signal porte un dict ou un str
     # Réveil venu d'un thread producteur. Passer par un signal est ce qui rend
     # la notification sûre : l'émission poste un événement et rend la main, le
     # drainage a lieu sur le thread Qt.
-    _wake = pyqtSignal()
+    _wake = Signal()
 
     def __init__(self, queue: Queue, poll_ms: int = 16, parent=None):
         super().__init__(parent)
@@ -39,7 +39,7 @@ class DisplayBus(QObject):
         if self._notifying:
             self._wake.connect(self._drain, Qt.ConnectionType.QueuedConnection)
             poll_ms = _SAFETY_POLL_MS
-        # Note: QTimer must not have `self` as parent in PyQt6 6.10+ due to a
+        # Note: QTimer must not have `self` as parent in PySide6 6.10+ due to a
         # regression where emitting a signal inside a child-QTimer callback raises
         # "native Qt signal is not callable". Keeping an explicit reference prevents GC.
         self._timer = QTimer()

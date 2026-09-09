@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -105,7 +105,7 @@ class _ConsentBanner(QWidget):
     d'encre, comme partout ailleurs.
     """
 
-    accepted = pyqtSignal()
+    accepted = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -130,7 +130,7 @@ class _ConsentBanner(QWidget):
 
 
 class LiveTab(QWidget):
-    save_requested = pyqtSignal()
+    save_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

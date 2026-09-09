@@ -1,5 +1,5 @@
 import pytest
-from PyQt6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication
 
 from benji.ui import history_window
 from benji.ui.history_window import HistoryWindow

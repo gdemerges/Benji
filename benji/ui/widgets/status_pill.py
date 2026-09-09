@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from benji.ui.style import FONT_MONO, FONT_UI, current_theme
 from benji.ui.widgets.waveform import WaveformDot

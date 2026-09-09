@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from PyQt6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from benji import meetings
 from benji.ui.history_window import HistoryWindow

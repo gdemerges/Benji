@@ -10,7 +10,12 @@ authors = [{ name = "Guillaume Demergès" }]
 dependencies = [
     "sounddevice>=0.4.6",
     "numpy~=2.3.5",
-    "PyQt6~=6.10.2",
+    # PySide6 plutôt que PyQt6 : binding Qt officiel, **LGPL-3.0** au lieu de
+    # GPL-3.0 — Benji se distribue en binaire fermé. Et le paquet est scindé :
+    # `Essentials` (QtCore/QtGui/QtWidgets/QtSvg, tout ce qu'on importe) sans
+    # `Addons` (QtQuick3D, QtMultimedia, QtWebEngine — 332 Mo qu'on n'installe
+    # simplement jamais), là où PyQt6 livrait les 241 Mo d'un bloc.
+    "PySide6-Essentials~=6.11.2",
     "onnxruntime~=1.23.2",
     "psutil~=7.2.2",
     "httpx~=0.28.1",
@@ -73,6 +78,10 @@ path = "benji/__init__.py"
 packages = ["benji"]
 
 [tool.pytest.ini_options]
+# Explicite plutôt que devine : pytest-qt choisit sinon le premier binding
+# trouve, et une machine ou PyQt traine encore ferait passer les tests contre
+# un toolkit que l'app n'utilise plus.
+qt_api = "pyside6"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 filterwarnings = ["ignore::DeprecationWarning"]

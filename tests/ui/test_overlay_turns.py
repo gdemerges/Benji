@@ -103,12 +103,17 @@ def test_une_pile_de_tours_ne_deborde_pas_du_plafond(qtbot):
     long_turn = "Une replique de reunion assez longue pour occuper plusieurs lignes " * 3
     w._update_word({"type": "segment_start"})
     for i in range(6):
-        w._update_word(_final(f"[{i}] " + long_turn, f"S{i % 3}"))
+        w._update_word(_final(f"[{i}] {long_turn} fin{i}", f"S{i % 3}"))
 
     budget = w.maximumHeight()
     assert w.label.sizeHint().height() <= budget
-    # Le tour le plus récent est celui qu'on lit : c'est lui qui reste.
-    assert "[5]" in w.label.text()
+    # Le tour le plus récent est celui qu'on lit : c'est lui qui reste. La sonde
+    # est en **fin** de tour : quand un seul tour subsiste et deborde encore, son
+    # debut est legitimement remplace par une ellipse (cf. le test suivant), donc
+    # un marqueur en tete ne survivrait pas a une police un peu plus haute.
+    text = w.label.text()
+    assert "fin5" in text
+    assert "fin4" not in text
 
 
 def test_un_tour_unique_trop_long_montre_sa_fin(qtbot):

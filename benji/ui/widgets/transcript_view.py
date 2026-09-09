@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,

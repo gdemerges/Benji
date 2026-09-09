@@ -11,8 +11,8 @@ mise en forme se composer pendant l'écriture.
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from benji.ui.style import (
     FONT_UI,
@@ -29,9 +29,9 @@ _PLACEHOLDER = "En attente du premier résumé…"
 
 
 class LiveSummaryWindow(QWidget):
-    _summary_signal = pyqtSignal(str, object)  # (text, datetime)
-    _start_signal = pyqtSignal(object)         # datetime
-    _chunk_signal = pyqtSignal(str)            # streamed token chunk
+    _summary_signal = Signal(str, object)  # (text, datetime)
+    _start_signal = Signal(object)         # datetime
+    _chunk_signal = Signal(str)            # streamed token chunk
 
     def __init__(self):
         super().__init__()

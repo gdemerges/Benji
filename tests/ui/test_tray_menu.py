@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 import benji.ui.tray as tray_mod
 from benji.config import STTConfig

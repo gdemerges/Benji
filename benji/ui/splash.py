@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 
 class SplashWindow(QWidget):
-    _status_signal = pyqtSignal(str)
+    _status_signal = Signal(str)
 
     def __init__(self):
         super().__init__()

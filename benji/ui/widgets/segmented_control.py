@@ -9,14 +9,14 @@ l'onglet actif — la même encre que le texte, aucune couleur dépensée ici.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from benji.ui.style import FONT_UI, current_theme
 
 
 class SegmentedControl(QWidget):
-    currentChanged = pyqtSignal(int)
+    currentChanged = Signal(int)
 
     def __init__(self, labels: list[str], parent=None):
         super().__init__(parent)

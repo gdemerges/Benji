@@ -19,9 +19,9 @@ import threading
 from dataclasses import dataclass, field
 from queue import Queue
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication
 
 from benji.audio.capture import AudioCapture
 from benji.audio.vad import VADProcessor
@@ -265,7 +265,7 @@ class BenjiApplication:
 
         if self.remote_mode or not onboarding.needs_onboarding():
             return True
-        from PyQt6.QtWidgets import QDialog
+        from PySide6.QtWidgets import QDialog
 
         from benji.ui.onboarding_window import OnboardingWindow
 
@@ -598,7 +598,7 @@ class BenjiApplication:
         porté et on le refait trois fois."""
         marked = self._mark_moment()
         if self.tray is not None:
-            from PyQt6.QtWidgets import QSystemTrayIcon
+            from PySide6.QtWidgets import QSystemTrayIcon
 
             self.tray.showMessage(
                 "Benji",
@@ -616,7 +616,7 @@ class BenjiApplication:
         """
         paused = self.toggle_pause()
         if self.tray is not None:
-            from PyQt6.QtWidgets import QSystemTrayIcon
+            from PySide6.QtWidgets import QSystemTrayIcon
 
             self.tray.showMessage(
                 "Benji",

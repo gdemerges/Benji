@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from html import escape
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from benji.ui.style import current_theme, reading_qss
 from benji.ui.widgets.chat_item import _GUTTER_WIDTH, _SPINE_X, _TEXT_X

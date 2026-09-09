@@ -8,9 +8,9 @@ import subprocess
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtCore import QFileSystemWatcher, QSize, Qt
-from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QFileSystemWatcher, QSize, Qt
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,

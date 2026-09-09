@@ -1,7 +1,7 @@
 """Export PDF — le seul format de Benji qui parte à quelqu'un qui n'a pas Benji."""
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from benji import export
 

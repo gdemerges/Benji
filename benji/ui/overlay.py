@@ -1,15 +1,15 @@
 import logging
 
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
     Qt,
     QTimer,
-    pyqtSignal,
-    pyqtSlot,
+    Signal,
+    Slot,
 )
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
@@ -82,9 +82,9 @@ class VADIndicator(WaveformDot):
 
 
 class SubtitleOverlay(QWidget):
-    new_text_signal = pyqtSignal(str)
-    new_word_signal = pyqtSignal(dict)
-    vad_status_signal = pyqtSignal(bool)
+    new_text_signal = Signal(str)
+    new_word_signal = Signal(dict)
+    vad_status_signal = Signal(bool)
 
     def __init__(self, bus, config: UIConfig = None, on_click=None, interactive: bool = False):
         """bus: DisplayBus. on_click: callable() appelé sur mousePressEvent (mode .app).
@@ -172,7 +172,7 @@ class SubtitleOverlay(QWidget):
         self.show()
         self._make_click_through()
 
-    @pyqtSlot(bool)
+    @Slot(bool)
     def _update_vad_status(self, speaking: bool):
         """Update VAD indicator."""
         if self._shutting_down:
@@ -224,7 +224,7 @@ class SubtitleOverlay(QWidget):
         Falls back to primary if the cursor screen can't be resolved.
         """
         if getattr(self.config, "follow_active_screen", True):
-            from PyQt6.QtGui import QCursor
+            from PySide6.QtGui import QCursor
             screen = QApplication.screenAt(QCursor.pos())
             if screen is not None:
                 return screen
@@ -441,7 +441,7 @@ class SubtitleOverlay(QWidget):
         except Exception as e:
             log.warning("Windows click-through failed: %s", e)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _update_text(self, text: str):
         """Classic mode: replace all text at once."""
         if self._shutting_down:
@@ -540,7 +540,7 @@ class SubtitleOverlay(QWidget):
         self._arm_window_guard()
         self.hide_timer.start(self.config.display_duration_ms)
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def _update_word(self, message: dict):
         """Streaming mode: add words progressively."""
         if self._shutting_down:

@@ -15,9 +15,9 @@ est de quatre `drawRoundedRect` par repeint du cadre.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPen
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from benji.ui.style import current_theme
 

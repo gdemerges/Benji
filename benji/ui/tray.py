@@ -4,9 +4,9 @@ import logging
 import subprocess
 import sys
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from benji.logging_config import log_dir, log_file_path
 from benji.report import build_mailto_url

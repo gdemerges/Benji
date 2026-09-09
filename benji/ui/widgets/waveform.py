@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QWidget
 
 # Phases décalées pour que les barres ne battent pas en chœur.
 _PHASES = (0.0, 1.9, 0.8, 2.6, 1.3)

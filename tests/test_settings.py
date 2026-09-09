@@ -4,7 +4,7 @@ QSettings est injecté en IniFormat vers un fichier temporaire — aucun accès 
 préférences réelles de l'utilisateur, aucun QApplication requis.
 """
 
-from PyQt6.QtCore import QSettings
+from PySide6.QtCore import QSettings
 
 from benji.config import LLMConfig, STTConfig, UIConfig
 from benji.settings import UserSettings

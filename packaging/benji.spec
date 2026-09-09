@@ -42,9 +42,21 @@ a = Analysis(
     # ~430 MB of dead weight. librosa's single use — the mel filterbank — lives
     # in benji/stt/mel_filters.py; pyannote diarization is a dev-only extra and
     # is not bundled (the app falls back to the torch-free pitch tagger).
+    #
+    # Qt: benji imports exactly four modules (QtCore, QtGui, QtWidgets, QtSvg).
+    # PySide6-Essentials still ships QML, Quick, PDF, Designer and a bundled
+    # ffmpeg for QtMultimedia — measured at ~145 MB of frameworks nothing in the
+    # app can reach. PyInstaller's PySide6 hook prunes by import graph, but not
+    # the QML runtime or the translations, so they are named here explicitly.
     excludes=[
         "torch", "torchvision", "torchaudio", "tensorflow",
         "librosa", "sklearn", "scikit_learn", "soundfile", "pooch", "soxr",
+        "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets",
+        "PySide6.QtQuickControls2", "PySide6.QtMultimedia",
+        "PySide6.QtMultimediaWidgets", "PySide6.QtPdf", "PySide6.QtPdfWidgets",
+        "PySide6.QtDesigner", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
+        "PySide6.QtSql", "PySide6.Qt3DCore", "PySide6.QtCharts", "PySide6.QtDataVisualization",
+        "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets", "PySide6.QtTest",
     ],
     cipher=block_cipher,
     noarchive=False,

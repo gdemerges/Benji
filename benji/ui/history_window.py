@@ -17,9 +17,9 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -81,11 +81,11 @@ _MEETING_ID_ROLE = Qt.ItemDataRole.UserRole
 
 
 class HistoryWindow(QWidget):
-    _summary_ready = pyqtSignal(str, str)  # (summary_text, file_path)
-    _summary_error = pyqtSignal(str)
+    _summary_ready = Signal(str, str)  # (summary_text, file_path)
+    _summary_error = Signal(str)
     # Émis depuis un fil de fond (le titreur automatique). La connexion est
     # queued : le rechargement a bien lieu sur le thread Qt.
-    meeting_renamed = pyqtSignal()
+    meeting_renamed = Signal()
 
     def __init__(self, session_start: datetime = None, stats: SessionStats | None = None):
         super().__init__()

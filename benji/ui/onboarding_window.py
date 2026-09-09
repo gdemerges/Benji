@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -50,9 +50,9 @@ def _rgba(color) -> str:
 class OnboardingWindow(QDialog):
     """Renvoie `Accepted` quand l'utilisateur est allé au bout."""
 
-    _mic_result = pyqtSignal(bool)
-    _download_progress = pyqtSignal(float, str)
-    _download_done = pyqtSignal(str)  # "" = succès
+    _mic_result = Signal(bool)
+    _download_progress = Signal(float, str)
+    _download_done = Signal(str)  # "" = succès
 
     def __init__(self, parent=None):
         super().__init__(parent)

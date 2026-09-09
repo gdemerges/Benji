@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, Qt
-from PyQt6.QtGui import QColor, QPainter, QPen
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,

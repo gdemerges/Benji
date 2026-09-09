@@ -13,13 +13,13 @@ import logging
 import threading
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 log = logging.getLogger(__name__)
 
 
 class AccountController(QObject):
-    failed = pyqtSignal(str)
+    failed = Signal(str)
 
     def __init__(
         self,

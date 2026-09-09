@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QSettings
+from PySide6.QtCore import QSettings
 
 _ORG = "benji"
 _APP = "benji"
