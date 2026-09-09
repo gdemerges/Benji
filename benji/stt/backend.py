@@ -119,6 +119,15 @@ class ParakeetBackend:
 
     def __init__(self, model_id: str = DEFAULT_MODEL):
         import mlx.core as mx
+
+        # `parakeet_mlx.audio` importe librosa pour un unique appel — la matrice
+        # de filtres mel — qui vaut ~40 Mo de dépendances dans le DMG. On pose
+        # notre équivalent avant l'import ; sans effet si un vrai librosa est
+        # installé. Doit rester *avant* la ligne suivante (cf. mel_filters).
+        from benji.stt import mel_filters
+
+        mel_filters.install()
+
         from parakeet_mlx import from_pretrained
 
         self.model_id = model_id

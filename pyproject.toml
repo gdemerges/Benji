@@ -87,3 +87,21 @@ line-length = 100
 # pycodestyle warnings (W), and pyupgrade (UP). Line length (E501) is left
 # off on purpose — several lines are intentionally long. Ratchet up later.
 select = ["F", "I", "W", "UP"]
+
+[tool.uv]
+# Deux dépendances transitives lourdes, déclarées en dur par nos moteurs mais
+# jamais atteintes à l'exécution. Les marqueurs impossibles les retirent de la
+# résolution sans forker les paquets amont.
+override-dependencies = [
+    # torch (~390 Mo avec sa suite) n'est tiré que par `mlx_whisper/torch_whisper.py`,
+    # module que *rien* n'importe : il sert au script de conversion de poids.
+    # Le marqueur `extra == 'diarization'` le fait revenir — et seulement là —
+    # car pyannote, lui, en a réellement besoin.
+    "torch ; extra == 'diarization'",
+    # librosa (~40 Mo avec scikit-learn, soundfile, pooch, soxr) n'est tiré que
+    # par `parakeet_mlx.audio` pour un seul appel, `filters.mel`, réimplémenté
+    # dans `benji/stt/mel_filters.py` et verrouillé bit à bit par les tests.
+    # Retiré inconditionnellement, lui : aucun extra n'en a besoin, et
+    # `mel_filters.install()` couvre les deux cas de toute façon.
+    "librosa ; sys_platform == 'never'",
+]

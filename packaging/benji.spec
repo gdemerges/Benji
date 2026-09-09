@@ -15,13 +15,16 @@ block_cipher = None
 _init = Path(SPECPATH).parent / "benji" / "__init__.py"
 VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', _init.read_text()).group(1)
 
+# faster-whisper / ctranslate2 left with Whisper when the CPU fallback was
+# dropped (Apple Silicon only). mlx_whisper and parakeet_mlx are imported lazily
+# from benji/stt/backend.py, so PyInstaller cannot see them by static analysis.
 hiddenimports = (
-    collect_submodules("faster_whisper")
-    + collect_submodules("ctranslate2")
-    + collect_submodules("onnxruntime")
+    collect_submodules("onnxruntime")
+    + collect_submodules("mlx_whisper")
+    + collect_submodules("parakeet_mlx")
 )
 
-datas = collect_data_files("faster_whisper") + collect_data_files("onnxruntime")
+datas = collect_data_files("onnxruntime") + collect_data_files("mlx_whisper")
 
 a = Analysis(
     ["../run.py"],
@@ -31,13 +34,18 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    # torch is a declared dep of mlx-whisper but is only used by its PyTorch→MLX
-    # *model conversion* path (mlx_whisper/torch_whisper.py). The shipped app runs
-    # pre-converted MLX models, so the runtime transcription path never imports
-    # torch — excluding it drops ~480 MB from the bundle. Real pyannote diarization
-    # (which does need torch) is an opt-in `uv sync --extra diarization` dev path,
-    # not bundled; the app falls back to the torch-free pitch tagger.
-    excludes=["torch", "torchvision", "torchaudio", "tensorflow"],
+    # torch and librosa are declared deps of mlx-whisper / parakeet-mlx that the
+    # runtime never reaches; both are now dropped from the resolution itself by
+    # `[tool.uv] override-dependencies` in pyproject.toml, so they are normally
+    # absent from the build venv already. The excludes stay as a belt: a dev who
+    # ran `uv sync --extra diarization` before building would otherwise ship
+    # ~430 MB of dead weight. librosa's single use — the mel filterbank — lives
+    # in benji/stt/mel_filters.py; pyannote diarization is a dev-only extra and
+    # is not bundled (the app falls back to the torch-free pitch tagger).
+    excludes=[
+        "torch", "torchvision", "torchaudio", "tensorflow",
+        "librosa", "sklearn", "scikit_learn", "soundfile", "pooch", "soxr",
+    ],
     cipher=block_cipher,
     noarchive=False,
 )
