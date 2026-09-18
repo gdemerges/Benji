@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import math
+import os
 import threading
 from collections import Counter, deque
 from datetime import datetime
+
+from benji.logging_config import log_dir
+
+log = logging.getLogger(__name__)
+
+# Journal borné des instantanés de session, dans log_dir() (comme benji.log) :
+# un canal de diagnostic, pas une donnée utilisateur (cf. benji/paths.py).
+# Anonyme par construction — mêmes chiffres que benji/report.py envoie déjà.
+_HISTORY_NAME = "sessions.jsonl"
+_MAX_HISTORY = 20
 
 
 class SessionStats:
@@ -89,3 +102,44 @@ class SessionStats:
             drops_str = ", ".join(f"{k}={v}" for k, v in sorted(s["drops"].items()))
             line += f" · drops[{drops_str}]"
         return line
+
+    def save(self) -> None:
+        """Ajoute l'instantané courant au journal borné des sessions.
+
+        Sans ça, une session qui se termine mal (crash natif exclu — rien ne
+        survit à un segfault, mais un quit normal après une série de
+        `stt_thread_restart` par exemple) ne laissait aucune trace passé le
+        process : le prochain rapport de bug ne parlait que d'une session
+        vierge qui vient de démarrer. Appelé au shutdown propre de l'app.
+        """
+        save_session(self)
+
+
+def save_session(stats: SessionStats) -> None:
+    entry = {"session_start": stats.session_start.isoformat(), **stats.snapshot()}
+    path = log_dir() / _HISTORY_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        lines.append(json.dumps(entry, ensure_ascii=False))
+        lines = lines[-_MAX_HISTORY:]
+        tmp = path.with_suffix(".jsonl.tmp")
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        log.warning("Historique de sessions non écrit (%s)", e)
+
+
+def load_last_session() -> dict | None:
+    """Dernier instantané de session persisté, ou None si absent/illisible."""
+    path = log_dir() / _HISTORY_NAME
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for raw_line in reversed(lines):
+        try:
+            return json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+    return None

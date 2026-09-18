@@ -684,3 +684,7 @@ class BenjiApplication:
             self.stt_supervisor.join(timeout=3)
         if self.remote_thread is not None:
             self.remote_thread.join(timeout=2)
+        # Après les joins : les compteurs (segments, drops) sont figés, on
+        # persiste l'instantané final plutôt qu'un état encore en mouvement.
+        if self.stats is not None:
+            self.stats.save()

@@ -24,6 +24,8 @@
 
 `recording.py` — **portillon de conservation**, pur. Le direct s'affiche toujours ; l'écriture disque attend l'accord, et l'attente (bornée) est versée à ce moment-là. Ne logue que des comptes, jamais du texte.
 
+`stats.py` — `SessionStats` compte les métriques de la session (segments, latences, drops), en mémoire. `save()` persiste un instantané dans `log_dir()/sessions.jsonl` (borné à 20, comme la rotation des logs) — appelé au shutdown propre de l'app, après les joins des threads. Sans ça, une session qui se termine mal ne laissait aucune trace passé le process : le rapport de bug suivant ne parlait que d'une session vierge. Diagnostic anonyme, comme le reste (cf. `report.py`).
+
 `queues.py` — `NotifyingQueue` : le producteur réveille son consommateur. Sonder `display_queue` plus lentement aurait retardé le premier mot d'un énoncé, la sonder vite réveillait le CPU en permanence.
 
 `meetings.py` — registre des réunions (id, titre, début, fin, **noms de locuteurs**, **moments marqués**) dans `meetings.json` (0600, écriture atomique). La réunion courante est un état **du process** (plusieurs `TranscriptionHistory` écrivent le même fichier) et n'est ouverte que par la première transcription : `current_meeting_id()` lit sans créer.
