@@ -129,6 +129,101 @@ class _ConsentBanner(QWidget):
         self.button.setStyleSheet(primary_button_qss(t))
 
 
+class _MeetingActions:
+    """Les trois gestes qui persistent au-delà de l'affichage courant du direct :
+    marquer un moment, nommer un locuteur, nourrir le glossaire.
+
+    Regroupés à part pour garder `LiveTab` centré sur l'affichage — chaque
+    méthode reste sans effet visible si l'écriture dans `meetings.py` échoue
+    (un registre indisponible ne doit pas interrompre une réunion en cours).
+    `items` est un callable plutôt qu'une liste : le transcript affiché change
+    à chaque phrase, on veut toujours la vue courante.
+    """
+
+    def __init__(self, items, speaker_names: dict[str, str]):
+        self._items = items
+        self._speaker_names = speaker_names
+        self._on_learn_term = None
+
+    def set_learn_handler(self, handler) -> None:
+        self._on_learn_term = handler
+
+    @property
+    def can_learn(self) -> bool:
+        return self._on_learn_term is not None
+
+    def mark_moment(self) -> bool:
+        items = self._items()
+        if not items:
+            return False
+        items[-1].set_marked(True)
+        try:
+            meetings.add_mark()
+        except Exception:
+            log.exception("Marque non persistée")
+        return True
+
+    def learn_term(self, parent, suggestion: str = "") -> None:
+        if self._on_learn_term is None:
+            return
+        term, ok = QInputDialog.getText(
+            parent, "Ajouter au glossaire",
+            "Terme correct (nom de client, de projet, jargon) :",
+            text=suggestion.strip(),
+        )
+        term = term.strip()
+        if not ok or not term:
+            return
+        try:
+            self._on_learn_term(term)
+        except Exception:
+            log.exception("Terme du glossaire non enregistré")
+            return
+        self._reapply_lexicon()
+
+    def _reapply_lexicon(self) -> None:
+        """Relit les lignes affichées avec le glossaire à jour.
+
+        Sans ça, le terme qu'on vient d'apprendre ne corrigerait que les
+        phrases suivantes — et la faute qu'on regardait resterait à l'écran.
+        """
+        from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
+
+        try:
+            compiled = compile_terms(load_terms())
+        except Exception:
+            log.exception("Glossaire illisible")
+            return
+        for item in self._items():
+            corrected = apply_lexicon(item._text, compiled)
+            if corrected != item._text:
+                item.set_text(corrected)
+
+    def rename_speaker(self, parent, label: str) -> None:
+        current = self._speaker_names.get(label, "")
+        name, ok = QInputDialog.getText(
+            parent, "Nommer le locuteur", f"Nom pour « {label} » :", text=current
+        )
+        if not ok:
+            return
+        name = name.strip()
+        self.set_speaker_name(label, name)
+        try:
+            meetings.name_speaker(label, name)
+        except Exception:
+            log.exception("Nom de locuteur non persisté")
+
+    def set_speaker_name(self, label: str, name: str) -> None:
+        """Applique un nom aux lignes déjà affichées et à celles qui viendront."""
+        if name:
+            self._speaker_names[label] = name
+        else:
+            self._speaker_names.pop(label, None)
+        for item in self._items():
+            if item._speaker == label:
+                item.set_speaker_name(name or None)
+
+
 class LiveTab(QWidget):
     save_requested = Signal()
 
@@ -142,12 +237,13 @@ class LiveTab(QWidget):
         self._last_minute: str | None = None
         # Noms donnés aux locuteurs pendant la réunion (étiquette → nom).
         self._speaker_names: dict[str, str] = {}
-        # Rappel d'apprentissage du glossaire, posé par la fenêtre principale.
-        # None = pas de moteur local à qui parler (mode remote).
-        self._on_learn_term = None
         # Derniers items encore remplaçables par une correction (seq → item).
         self._correctable: list[ChatItem] = []
         self._build_ui()
+        # Marquer / nommer / glossaire : gestes persistés, regroupés à part
+        # (cf. _MeetingActions). Construit après _build_ui() : il capture
+        # self._items, qui a besoin de self.content_layout.
+        self._actions = _MeetingActions(self._items, self._speaker_names)
 
     def _build_ui(self) -> None:
         self.scroll = QScrollArea()
@@ -490,7 +586,10 @@ class LiveTab(QWidget):
         if text:
             QGuiApplication.clipboard().setText(text)
 
-    # --- Marquer un moment -------------------------------------------------
+    # --- Marquer / nommer / glossaire --------------------------------------
+    # Gestes qui persistent dans benji/meetings.py, délégués à _MeetingActions
+    # (cf. sa docstring) pour garder cette classe centrée sur l'affichage.
+
     def mark_moment(self) -> bool:
         """« Là, c'est important. » Marque la dernière chose dite.
 
@@ -499,22 +598,11 @@ class LiveTab(QWidget):
         que le *ça*. On marque la **dernière ligne**, jamais la suivante : on
         réagit à ce qu'on vient d'entendre.
         """
-        items = self._items()
-        if not items:
-            return False
-        items[-1].set_marked(True)
-        try:
-            meetings.add_mark()
-        except Exception:
-            # Marquer est un confort : un registre indisponible laisse la marque
-            # à l'écran pour la réunion en cours plutôt que d'interrompre.
-            log.exception("Marque non persistée")
-        return True
+        return self._actions.mark_moment()
 
-    # --- Glossaire qui s'apprend -----------------------------------------
     def set_learn_handler(self, handler) -> None:
         """`handler(terme) -> bool` : persiste le terme et l'arme sur le moteur."""
-        self._on_learn_term = handler
+        self._actions.set_learn_handler(handler)
 
     def learn_term(self, suggestion: str = "") -> None:
         """Apprend un terme depuis le transcript, là où on voit la faute.
@@ -523,42 +611,8 @@ class LiveTab(QWidget):
         fallait aller le saisir dans les Préférences — au moment précis où l'on
         n'y pense pas. Ici, on vient de lire « data dogue » : c'est le bon moment.
         """
-        if self._on_learn_term is None:
-            return
-        term, ok = QInputDialog.getText(
-            self, "Ajouter au glossaire",
-            "Terme correct (nom de client, de projet, jargon) :",
-            text=suggestion.strip(),
-        )
-        term = term.strip()
-        if not ok or not term:
-            return
-        try:
-            self._on_learn_term(term)
-        except Exception:
-            log.exception("Terme du glossaire non enregistré")
-            return
-        self._reapply_lexicon()
+        self._actions.learn_term(self, suggestion)
 
-    def _reapply_lexicon(self) -> None:
-        """Relit les lignes affichées avec le glossaire à jour.
-
-        Sans ça, le terme qu'on vient d'apprendre ne corrigerait que les phrases
-        suivantes — et la faute qu'on regardait resterait à l'écran.
-        """
-        from benji.stt.lexicon import apply_lexicon, compile_terms, load_terms
-
-        try:
-            compiled = compile_terms(load_terms())
-        except Exception:
-            log.exception("Glossaire illisible")
-            return
-        for item in self._items():
-            corrected = apply_lexicon(item._text, compiled)
-            if corrected != item._text:
-                item.set_text(corrected)
-
-    # --- Nommer les locuteurs --------------------------------------------
     def _item_at(self, pos) -> ChatItem | None:
         """Le ChatItem sous le curseur, en remontant depuis le widget touché."""
         widget = self.childAt(pos)
@@ -576,29 +630,11 @@ class LiveTab(QWidget):
         fenêtre Réunions. Le nom est porté par la réunion (`benji/meetings.py`),
         donc il vaut aussi pour la relecture et l'export.
         """
-        current = self._speaker_names.get(label, "")
-        name, ok = QInputDialog.getText(
-            self, "Nommer le locuteur", f"Nom pour « {label} » :", text=current
-        )
-        if not ok:
-            return
-        self.set_speaker_name(label, name.strip())
-        try:
-            meetings.name_speaker(label, name.strip())
-        except Exception:
-            # Nommer est un confort : un registre indisponible ne doit pas
-            # remonter une erreur en pleine réunion. L'affichage reste juste.
-            log.exception("Nom de locuteur non persisté")
+        self._actions.rename_speaker(self, label)
 
     def set_speaker_name(self, label: str, name: str) -> None:
         """Applique un nom aux lignes déjà affichées et à celles qui viendront."""
-        if name:
-            self._speaker_names[label] = name
-        else:
-            self._speaker_names.pop(label, None)
-        for item in self._items():
-            if item._speaker == label:
-                item.set_speaker_name(name or None)
+        self._actions.set_speaker_name(label, name)
 
     def _open_context_menu(self, pos) -> None:
         menu = QMenu(self)
@@ -612,7 +648,7 @@ class LiveTab(QWidget):
         mark.setEnabled(bool(self._items()))
         mark.triggered.connect(self.mark_moment)
         menu.addSeparator()
-        if self._on_learn_term is not None:
+        if self._actions.can_learn:
             selection = ""
             if item is not None:
                 selection = item.text_label.selectedText().strip()

@@ -140,23 +140,32 @@ class MeetingStore:
 
     def end(self, meeting_id: str, *, now: datetime | None = None) -> None:
         stamp = (now or datetime.now()).isoformat()
+
+        def mutate(entry: dict) -> None:
+            if entry.get("ended_at") is None:
+                entry["ended_at"] = stamp
+
+        self._mutate(meeting_id, mutate)
+
+    def _mutate(self, meeting_id: str, mutate) -> None:
+        """Charge le registre, applique `mutate` à l'entrée `meeting_id`, réécrit.
+
+        Partagé par les écritures ciblant une seule réunion (`rename`,
+        `name_speaker`, `add_mark`, `end`) : même verrou, même
+        lecture-écriture atomique, seule la mutation change.
+        """
         with self._lock:
             raw = self._read()
             for entry in raw:
-                if entry.get("id") == meeting_id and entry.get("ended_at") is None:
-                    entry["ended_at"] = stamp
+                if entry.get("id") == meeting_id:
+                    mutate(entry)
             self._write(raw)
 
     def rename(self, meeting_id: str, title: str) -> None:
         title = title.strip()
         if not title:
             return
-        with self._lock:
-            raw = self._read()
-            for entry in raw:
-                if entry.get("id") == meeting_id:
-                    entry["title"] = title
-            self._write(raw)
+        self._mutate(meeting_id, lambda entry: entry.update(title=title))
 
     def name_speaker(self, meeting_id: str, label: str, name: str) -> None:
         """Nomme (ou dénomme, avec un nom vide) un locuteur de la réunion."""
@@ -164,36 +173,32 @@ class MeetingStore:
         if not label:
             return
         name = (name or "").strip()
-        with self._lock:
-            raw = self._read()
-            for entry in raw:
-                if entry.get("id") != meeting_id:
-                    continue
-                speakers = entry.get("speakers")
-                if not isinstance(speakers, dict):
-                    speakers = {}
-                if name:
-                    speakers[label] = name
-                else:
-                    speakers.pop(label, None)
-                entry["speakers"] = speakers
-            self._write(raw)
+
+        def mutate(entry: dict) -> None:
+            speakers = entry.get("speakers")
+            if not isinstance(speakers, dict):
+                speakers = {}
+            if name:
+                speakers[label] = name
+            else:
+                speakers.pop(label, None)
+            entry["speakers"] = speakers
+
+        self._mutate(meeting_id, mutate)
 
     def add_mark(self, meeting_id: str, at: datetime) -> None:
         """Marque un moment de la réunion."""
         stamp = at.isoformat()
-        with self._lock:
-            raw = self._read()
-            for entry in raw:
-                if entry.get("id") != meeting_id:
-                    continue
-                marks = entry.get("marks")
-                if not isinstance(marks, list):
-                    marks = []
-                if stamp not in marks:
-                    marks.append(stamp)
-                entry["marks"] = marks
-            self._write(raw)
+
+        def mutate(entry: dict) -> None:
+            marks = entry.get("marks")
+            if not isinstance(marks, list):
+                marks = []
+            if stamp not in marks:
+                marks.append(stamp)
+            entry["marks"] = marks
+
+        self._mutate(meeting_id, mutate)
 
     def delete(self, meeting_id: str) -> None:
         with self._lock:

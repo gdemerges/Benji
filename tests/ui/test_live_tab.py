@@ -432,7 +432,7 @@ def test_apprendre_un_terme_corrige_la_ligne_deja_affichee(qtbot, monkeypatch, t
     tab.set_learn_handler(lambda term: True)
     tab.on_event(_final("On surveille avec data dogue.", "A", 1))
 
-    tab._reapply_lexicon()
+    tab._actions._reapply_lexicon()
 
     assert "Datadog" in _items(tab)[0]._text
 
