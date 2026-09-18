@@ -64,7 +64,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Then:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/benji.git
+git clone https://github.com/gdemerges/benji.git
 cd benji
 uv sync
 ```
