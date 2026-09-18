@@ -1,23 +1,22 @@
 # Benji — Backend
 
-> ## ❄️ GELÉ (2026-08-19)
+> ## 🔓 Dégelé partiellement (2026-09-18)
 >
-> Ce service est **suspendu**, pas abandonné : rien n'est supprimé, tout
-> redémarre en l'état si besoin. Décision prise après analyse du produit —
-> l'infrastructure d'abonnement (auth, quotas, métering, Stripe) est complète
-> alors que l'app desktop n'est pas encore distribuable et n'a aucun
-> utilisateur. Construire la facturation avant le premier client est l'erreur
-> à corriger en priorité.
+> Suspendu le 2026-08-19 (voir historique git pour le détail de cette
+> décision), repris pour porter l'offre payante cross-OS du modèle freemium
+> (achat unique local sur Mac reste le défaut ; Windows/Linux passent par un
+> moteur local plus léger **ou** ce backend, cf. `CLAUDE.md` racine et
+> `benji/stt/CLAUDE.md`). Le service tourne à nouveau en développement/test —
+> auth, quotas, métering, Checkout/webhook Stripe (déjà codés, cf. tableau
+> ci-dessous) sont utilisables avec des clés **test/sandbox**.
 >
-> **Ne pas reprendre** tant que Benji n'est pas distribué et que des
-> utilisateurs ne réclament pas explicitement la synchronisation multi-appareils :
-> - ❌ pas de passage Stripe en **live** (Checkout, portail, produits/prix)
-> - ❌ pas de persistance `/v1/history`
-> - ❌ pas de migration SQLite → Postgres
-> - ❌ pas de clients mobiles
->
-> Le produit se vend d'abord en **achat unique, 100 % local** — voir le README
-> racine. Le cloud est une extension éventuelle, pas le modèle par défaut.
+> **Toujours hors scope**, décision de Guillaume à reprendre explicitement
+> avant d'y toucher :
+> - ❌ passage Stripe en **live** (clés de production, compte vérifié) — reste
+>   une action sur le dashboard Stripe, pas un chantier de code
+> - ❌ persistance `/v1/history` (sync multi-appareils)
+> - ❌ migration SQLite → Postgres
+> - ❌ clients mobiles
 
 Service cloud (FastAPI) : proxy STT/résumé, auth, facturation. Détient les clés
 API ; les clients (macOS, iOS, …) ne les voient jamais.
@@ -33,7 +32,7 @@ Cadrage : [`../docs/cloud-architecture.md`](../docs/cloud-architecture.md).
 | `GET /v1/me` | **réel** — plan, droits (`free`/`pro`), quota STT depuis le métering |
 | `POST /v1/summary` (SSE) | **réel** — streame Claude (alias `haiku`/`sonnet`/`opus`), gated `cloud_summary` |
 | `WS /v1/transcribe` | **réel** — STT (Deepgram/Grok) + auth + **quota** + métering. `STT_BACKEND=fake` hors-ligne. Validation live à faire. |
-| `POST /v1/billing/webhook` | **réel** — signature HMAC Stripe vérifiée, bascule de plan. Checkout/Stripe live = TODO |
+| `POST /v1/billing/checkout` · `portal` · `webhook` | **réel** — Checkout Session, portail client, signature HMAC vérifiée, bascule de plan. Sans clé configurée → repli stub (dev/CI). Passage en **live** = clés de production sur le dashboard Stripe, pas du code manquant |
 | `GET /v1/history` | stub |
 
 ### Variables d'environnement
@@ -69,15 +68,15 @@ uv run pytest
 
 Les tests sont hermétiques (Claude est mocké, aucun appel réseau).
 
-## Prochaines étapes — à la reprise seulement
-
-Gelées (cf. bandeau en tête). Conservées telles quelles pour retrouver le fil :
+## Prochaines étapes
 
 1. Valider STT (Deepgram/Grok) en conditions réelles + flux temps réel app↔backend.
-2. Intégration Stripe live : création de Checkout Sessions, portail client,
-   produits/prix (le webhook + la bascule de plan sont déjà en place).
-3. Persistance de l'historique (`/v1/history`) + sync multi-appareils.
+2. Passage Stripe en live : produits/prix + clés de production sur le dashboard
+   Stripe (le code — Checkout, portail, webhook, bascule de plan — est déjà en
+   place, cf. tableau ci-dessus). **Reste gelé**, décision explicite requise.
+3. Persistance de l'historique (`/v1/history`) + sync multi-appareils. **Reste gelé.**
 4. Migration SQLite → Postgres pour le multi-instance (interface `Database` isolée).
+   **Reste gelé.**
 
-**Condition de reprise** : des utilisateurs payants existent et demandent la
-synchronisation entre appareils.
+**Condition de reprise des points gelés** : des utilisateurs payants existent et
+demandent la synchronisation entre appareils.

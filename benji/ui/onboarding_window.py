@@ -49,13 +49,18 @@ def _rgba(color) -> str:
 
 
 class OnboardingWindow(QDialog):
-    """Renvoie `Accepted` quand l'utilisateur est allé au bout."""
+    """Renvoie `Accepted` quand l'utilisateur est allé au bout.
+
+    `session` (cf. `benji.account.Session`) est injectée par `app.py`, qui
+    l'a déjà construite avant l'assistant : sans elle, l'option payante reste
+    affichée mais ne peut rien connecter (utile en test).
+    """
 
     _mic_result = Signal(bool)
     _download_progress = Signal(float, str)
     _download_done = Signal(str)  # "" = succès
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, session=None):
         super().__init__(parent)
         self.setWindowTitle("Bienvenue dans Benji")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -64,6 +69,7 @@ class OnboardingWindow(QDialog):
 
         self._downloader: onboarding.ModelDownloader | None = None
         self._mic_state = onboarding.microphone_status()
+        self._session = session
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_welcome())
@@ -131,29 +137,38 @@ class OnboardingWindow(QDialog):
         return page
 
     def _build_offer(self) -> QWidget:
-        """Gratuit (local) et/ou payant (cloud) — le payant n'existe pas encore.
+        """Gratuit (local) et/ou payant (cloud), pas exclusifs l'un de l'autre.
 
-        Seul le gratuit transcrit aujourd'hui : la case est cochée et
-        verrouillée plutôt que présentée comme un vrai choix qu'on pourrait
-        décocher pour se retrouver sans rien. Le payant reste visible pour
-        que l'offre à venir ne surprenne personne, sans promettre un achat
-        qui échouerait (Stripe n'est pas en ligne).
+        Cocher le payant ouvre la connexion tout de suite — c'est le seul
+        moment où le choix a un sens : décider après coup, dans les
+        Préférences, reviendrait à ne jamais savoir qu'un abonnement existe.
+        `_persist_offer_choice()` (appelé à la fin de l'assistant) écrit
+        `stt_provider` dans QSettings ; comme le reste des Moteurs, ça ne
+        prend effet qu'au prochain lancement.
         """
         page = QWidget()
         self.offer_title = QLabel("Comment transcrire vos réunions ?")
         self.offer_body = QLabel(
             "Gratuit, en local : le moteur tourne sur cet ordinateur, rien ne "
-            "sort de la machine. C'est le mode de Benji aujourd'hui.\n\n"
+            "sort de la machine.\n\n"
             "Payant, via le cloud Benji : une meilleure qualité, quel que "
-            "soit l'ordinateur. Pas encore disponible."
+            "soit l'ordinateur. Les deux peuvent être actifs à la fois."
         )
         self.offer_body.setWordWrap(True)
 
         self.offer_free = QCheckBox("Gratuit — transcription locale")
         self.offer_free.setChecked(True)
-        self.offer_free.setEnabled(False)
-        self.offer_cloud = QCheckBox("Payant — cloud Benji (bientôt disponible)")
-        self.offer_cloud.setEnabled(False)
+        self.offer_cloud = QCheckBox("Payant — cloud Benji, abonnement")
+        self.offer_cloud.setChecked(
+            self._session is not None and self._session.is_authenticated
+        )
+        self.offer_cloud.toggled.connect(self._on_offer_cloud_toggled)
+
+        self.offer_status = QLabel("")
+        self.offer_status.setWordWrap(True)
+        self.offer_warning = QLabel("")
+        self.offer_warning.setWordWrap(True)
+        self.offer_warning.hide()
 
         layout = QVBoxLayout(page)
         layout.setSpacing(10)
@@ -162,8 +177,41 @@ class OnboardingWindow(QDialog):
         layout.addSpacing(6)
         layout.addWidget(self.offer_free)
         layout.addWidget(self.offer_cloud)
+        layout.addWidget(self.offer_status)
+        layout.addWidget(self.offer_warning)
         layout.addStretch(1)
+        self._refresh_offer_status()
         return page
+
+    def _on_offer_cloud_toggled(self, checked: bool) -> None:
+        already_in = self._session is not None and self._session.is_authenticated
+        if checked and self._session is not None and not already_in:
+            from benji.ui.login_dialog import LoginDialog
+
+            if not LoginDialog(self._session, parent=self).exec():
+                self.offer_cloud.setChecked(False)
+        self._refresh_offer_status()
+
+    def _refresh_offer_status(self) -> None:
+        if self._session is not None and self._session.is_authenticated:
+            self.offer_status.setText(f"Connecté : {self._session.email}")
+        else:
+            self.offer_status.setText("")
+        if self.offer_free.isChecked() or self.offer_cloud.isChecked():
+            self.offer_warning.hide()
+
+    def _persist_offer_choice(self) -> None:
+        """`stt_provider`, comme le reste des Moteurs : effet au redémarrage.
+
+        Priorité au cloud si les deux sont cochés — un abonné s'attend à la
+        meilleure qualité par défaut ; le local reste sélectionnable dans les
+        Préférences.
+        """
+        from benji.settings import UserSettings
+
+        connected = self._session is not None and self._session.is_authenticated
+        provider = "remote" if (self.offer_cloud.isChecked() and connected) else "parakeet"
+        UserSettings().set_value("stt_provider", provider)
 
     def _build_microphone(self) -> QWidget:
         page = QWidget()
@@ -335,8 +383,16 @@ class OnboardingWindow(QDialog):
 
     def _next(self) -> None:
         index = self.pages.currentIndex()
+        if index == 1 and not self.offer_free.isChecked() and not self.offer_cloud.isChecked():
+            # Aucune des deux offres n'est active : Benji ne transcrirait rien.
+            self.offer_warning.setText(
+                "Choisissez au moins une option pour pouvoir transcrire."
+            )
+            self.offer_warning.show()
+            return
         if index >= self.pages.count() - 1:
             onboarding.mark_done(microphone=self._mic_state)
+            self._persist_offer_choice()
             self.accept()
             return
         self.pages.setCurrentIndex(index + 1)
@@ -415,6 +471,11 @@ class OnboardingWindow(QDialog):
         )
         self.mic_status.setStyleSheet(status_qss)
         self.progress_label.setStyleSheet(status_qss)
+        self.offer_status.setStyleSheet(status_qss)
+        self.offer_warning.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 12px; color: {_rgba(t.record)}; "
+            "background: transparent;"
+        )
         self.next_btn.setStyleSheet(primary_button_qss(t))
         for btn in (self.back_btn, self.mic_btn, self.download_btn):
             btn.setStyleSheet(secondary_button_qss(t))
