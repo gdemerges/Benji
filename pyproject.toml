@@ -35,6 +35,10 @@ dependencies = [
     "parakeet-mlx>=0.1 ; sys_platform == 'darwin'",
     # Moteur de la passe finale : seul des deux à savoir forcer la langue.
     "mlx-whisper>=0.4.0 ; sys_platform == 'darwin'",
+    # Moteur local hors Mac (Windows/Linux, sans MLX) : partielles et finale,
+    # cf. FasterWhisperBackend dans benji/stt/backend.py. CPU par défaut, CUDA
+    # utilisé automatiquement s'il est détecté.
+    "faster-whisper>=1.0 ; sys_platform != 'darwin'",
 ]
 
 [dependency-groups]

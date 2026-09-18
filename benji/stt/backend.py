@@ -20,8 +20,15 @@ puis **relire le texte produit** et ne relancer Whisper que sur les segments qui
 ont visiblement dérivé (cf. `benji/stt/language.py`). La garantie est conservée
 là où elle se joue ; le coût n'est payé que là où il sert.
 
-Le repli CPU faster-whisper, lui, reste retiré : Benji est Apple Silicon
-exclusivement.
+**Windows/Linux → faster-whisper.** Sans Apple Silicon, pas de MLX : le moteur
+local de l'offre gratuite devient `FasterWhisperBackend` (CTranslate2), détecté
+par l'absence de `parakeet_mlx` plutôt que par l'OS — un Mac Intel sans MLX
+tombe dans le même cas. Contrairement à Parakeet, faster-whisper accepte
+`language=` directement : pas besoin du relais hybride, un seul moteur suffit
+pour les deux passes. Mesuré sur CPU (audio français synthétisé, cf.
+`benji/stt/CLAUDE.md`) : `tiny` (~120-240 ms) est du même ordre que Parakeet et
+sert aux passes partielles ; `small`/`medium` (0,9 à 3,8 s) sont trop lents en
+partiel mais corrects en final, où une seule passe est payée par segment.
 """
 
 from __future__ import annotations
@@ -216,6 +223,80 @@ class WhisperBackend:
                     yield {"text": text, "start": w.get("start"), "end": w.get("end")}
 
 
+def _faster_whisper_device(has_cuda: bool) -> tuple[str, str]:
+    """Device et type de calcul — pure, pour se tester sans `ctranslate2`.
+
+    CUDA non mesuré sur ce projet (pas de GPU NVIDIA disponible) : les
+    benchmarks connus de la lib suggèrent ×10-20 sur CPU, de quoi rapprocher
+    small/medium du niveau Parakeet pour un utilisateur Windows avec carte
+    dédiée — à confirmer avant d'en faire un choix d'architecture.
+    """
+    return ("cuda", "float16") if has_cuda else ("cpu", "int8")
+
+
+def _words_from_segments(segments) -> Iterator[dict]:
+    """Mots horodatés à partir des segments faster-whisper.
+
+    Contrairement à Parakeet, faster-whisper rend déjà des mots entiers (pas de
+    sous-mots à recoller) : `word_timestamps=True` suffit. Fonction pure — elle
+    prend n'importe quel itérable de `seg.words[].{word,start,end}`, donc elle
+    se teste sans charger le moindre modèle.
+    """
+    for seg in segments:
+        for w in seg.words or []:
+            text = (getattr(w, "word", "") or "").strip()
+            if text:
+                yield {"text": text, "start": w.start, "end": w.end}
+
+
+class FasterWhisperBackend:
+    """Whisper via faster-whisper (CTranslate2) — le moteur local hors Mac.
+
+    Sans MLX, pas de Parakeet : `language=` est passé directement à chaque
+    appel, donc pas de relais hybride à construire — un seul moteur sert aux
+    deux passes, juste dimensionné différemment (cf. `build_backend` /
+    `build_final_backend`). CPU par défaut (int8) ; CUDA utilisé
+    automatiquement s'il est détecté (float16, non validé sur ce projet).
+
+    Chargé **au constructeur**, pas paresseusement comme `WhisperBackend` : sur
+    ce chemin faster-whisper est le moteur de tous les segments, partiels et
+    finaux — le charger tard ne ferait que déplacer le coût sur le premier
+    segment réel, en pleine réunion.
+    """
+
+    name = "faster-whisper"
+
+    def __init__(self, model_size: str = "tiny", language: str | None = "fr"):
+        from faster_whisper import WhisperModel
+
+        try:
+            import ctranslate2
+
+            has_cuda = ctranslate2.get_cuda_device_count() > 0
+        except Exception:
+            has_cuda = False
+        device, compute_type = _faster_whisper_device(has_cuda)
+
+        self.language = language
+        log.info("Chargement de faster-whisper '%s' sur %s (%s)...",
+                 model_size, device, compute_type)
+        self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+
+    def transcribe(self, audio) -> Iterator[dict]:
+        if audio is None or len(audio) == 0:
+            return
+        segments, _info = self.model.transcribe(
+            audio,
+            language=self.language,
+            # Glouton : mesuré comme le meilleur compromis latence/qualité pour
+            # les tampons courts de Benji (cf. benji/stt/CLAUDE.md).
+            beam_size=1,
+            word_timestamps=True,
+            condition_on_previous_text=False,
+        )
+        yield from _words_from_segments(segments)
+
+
 class HybridFinalBackend:
     """Parakeet d'abord, Whisper **seulement si la langue a dérivé**.
 
@@ -285,8 +366,24 @@ class HybridFinalBackend:
             self._pool = None
 
 
+DEFAULT_FASTER_WHISPER_PARTIAL_MODEL = "tiny"
+
+
+def _parakeet_available() -> bool:
+    """Présence de Parakeet/MLX — Apple Silicon seulement.
+
+    Sonde plutôt que `platform.system() == "Darwin"` : un Mac Intel sans mlx
+    (les deux sont des dépendances dures marquées `sys_platform == 'darwin'`
+    dans pyproject.toml, pas `sys_platform == 'darwin' and arm64`) tombe dans
+    le même cas qu'un Windows/Linux, et doit prendre le même chemin.
+    """
+    return importlib.util.find_spec("parakeet_mlx") is not None
+
+
 def build_backend(model_id: str = DEFAULT_MODEL) -> STTBackend:
     """Moteur des passes partielles."""
+    if not _parakeet_available():
+        return FasterWhisperBackend(DEFAULT_FASTER_WHISPER_PARTIAL_MODEL)
     return ParakeetBackend(model_id)
 
 
@@ -305,13 +402,20 @@ def build_final_backend(
 ) -> STTBackend:
     """Moteur de la passe finale — celui dont le texte est conservé.
 
-    - `"hybrid"` (défaut) — Parakeet, relayé par Whisper sur les seuls segments
-      qui ont dérivé. Exige `fast`, le moteur des partielles, qu'il réutilise.
+    - Sans Parakeet/MLX (Windows/Linux) — `FasterWhisperBackend`, seul : il
+      accepte `language=` directement, donc aucun relais hybride n'a de sens
+      ici. `engine` (qui n'a de signification que pour l'arbitrage MLX) est
+      ignoré sur ce chemin.
+    - `"hybrid"` (défaut, Mac) — Parakeet, relayé par Whisper sur les seuls
+      segments qui ont dérivé. Exige `fast`, le moteur des partielles, qu'il
+      réutilise.
     - `"whisper"` — Whisper sur tous les finals : la garantie maximale, au prix
       fort. Le repli si l'hybride déçoit en réunion.
     - `"parakeet"` — renvoie None : l'appelant réutilise le moteur des
       partielles, au prix de la garantie de langue.
     """
+    if not _parakeet_available():
+        return FasterWhisperBackend(model_size, language)
     if engine == "parakeet":
         return None
     if not _whisper_available():

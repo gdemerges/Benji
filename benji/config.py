@@ -69,8 +69,13 @@ class STTConfig:
     #                garantie maximale. Le repli si l'hybride déçoit en réunion.
     #   "parakeet" — réutilise le moteur des partielles : ~5× plus rapide sur le
     #                final, mais la langue n'est plus garantie du tout.
+    # Sans Parakeet/MLX (Windows/Linux), ce champ dimensionne directement
+    # FasterWhisperBackend et `final_engine` est ignoré (cf. stt/backend.py).
     final_engine: str = "hybrid"
-    final_model_size: str = "medium"
+    # "medium" coûte ~150 ms sur MLX (rattrapage rare, hybride) mais 2,5-3,8 s
+    # sur CPU faster-whisper où c'est le seul moteur de *chaque* final (mesuré,
+    # cf. benji/stt/CLAUDE.md) — "small" (~1 s) reste utilisable en réunion.
+    final_model_size: str = "medium" if IS_MACOS else "small"
     # Glossaire utilisateur (noms propres, jargon maison) appliqué au texte
     # final, cf. stt/lexicon.py. Le fichier vit dans les données utilisateur ;
     # ce drapeau ne fait qu'activer sa lecture.

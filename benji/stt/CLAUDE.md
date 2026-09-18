@@ -41,6 +41,30 @@
   faire dériver la détection. Il faut de la vraie parole pour l'observer : s'en
   souvenir avant de conclure quoi que ce soit d'un banc d'essai TTS.
 
+  **Windows/Linux → `FasterWhisperBackend`** (CTranslate2), détecté par
+  `_parakeet_available()` (sonde `parakeet_mlx`, pas l'OS — un Mac Intel sans
+  mlx suit le même chemin) plutôt que branché sur `IS_MACOS`. Contrairement à
+  Parakeet, faster-whisper accepte `language=` à la demande : pas de relais
+  hybride, un seul moteur sert aux deux passes, dimensionné différemment.
+  Mesuré sur CPU (audio français `say`, `beam_size=1`, mêmes tampons que le
+  banc Parakeet) :
+
+  | clip | Parakeet (MLX) | fw-tiny (CPU) | fw-small (CPU) | fw-medium (CPU) |
+  |---|---|---|---|---|
+  | 1,2 s | 58 ms | 116 ms | 948 ms | 2 524 ms |
+  | 14,7 s | 222 ms | 242 ms | 1 237 ms | 3 780 ms |
+
+  `tiny` (partielles) reste dans l'ordre de grandeur de Parakeet ; `small`
+  (finale, `STTConfig.final_model_size` par défaut hors Mac) coûte ~1 s mais
+  n'est payé qu'une fois par segment, sans arbitrage à attendre. `medium` est
+  trop lent même en final (mesuré). CUDA détecté automatiquement
+  (`ctranslate2.get_cuda_device_count()`) mais **non validé** — pas de GPU
+  NVIDIA disponible pour la mesure ; les benchmarks connus de la lib
+  suggèrent ×10-20, de quoi rapprocher small/medium du niveau Parakeet.
+  Chargé **au constructeur** (pas paresseusement comme `WhisperBackend`) :
+  sur ce chemin c'est le moteur de tous les segments, le charger tard ne
+  ferait que déplacer le coût sur le premier segment réel, en pleine réunion.
+
   **Piège MLX — le modèle appartient au thread qui l'a chargé.** MLX charge paresseusement et lie les tableaux au **stream du thread qui les évalue en premier**. `ParakeetBackend.__init__` appelle donc `mx.eval(model.parameters())` pour matérialiser les poids sur place ; sans ça la liaison n'aurait lieu qu'au premier décodage réel et l'inférence depuis le thread STT lèverait « There is no Stream(gpu, N) in current thread ». `warmup()` ne peut pas jouer ce rôle : il préchauffe sur du silence, dont Parakeet ne décode aucun token. Et le chargement doit se faire sur un thread qui **vit aussi longtemps que l'app** — d'où `_load_transcriber` sur le thread principal dans `app.py`. Chargé depuis un thread éphémère, Parakeet devient **définitivement** inutilisable, sans réparation possible par `mx.new_stream()`.
 
   **Alimenté en mémoire** : l'API publique de `parakeet-mlx` ne transcrit que des chemins de fichiers ; on passe par `get_logmel()` + `generate()`. Écrire les tampons d'une réunion dans un fichier temporaire serait une régression de confidentialité — et ça évite la dépendance à ffmpeg. Ne pas « simplifier » vers `model.transcribe(path)`.
