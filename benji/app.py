@@ -269,7 +269,7 @@ class BenjiApplication:
 
         from benji.ui.onboarding_window import OnboardingWindow
 
-        return OnboardingWindow().exec() == QDialog.DialogCode.Accepted
+        return OnboardingWindow(session=self.session).exec() == QDialog.DialogCode.Accepted
 
     def _show_splash(self) -> SplashWindow:
         # Charge le modèle sur un thread de fond pour que l'UI reste réactive et
@@ -580,9 +580,9 @@ class BenjiApplication:
         """
         if not (self.cfg.ui.global_hotkey_pause or self.cfg.ui.global_hotkey_mark):
             return
-        from benji.hotkeys import GlobalHotkeys
+        from benji.hotkeys import build_hotkeys
 
-        self.global_hotkeys = GlobalHotkeys()
+        self.global_hotkeys = build_hotkeys()
         if self.cfg.ui.global_hotkey_pause:
             self.global_hotkeys.register(
                 self.cfg.ui.global_hotkey_pause, self._toggle_pause_notified

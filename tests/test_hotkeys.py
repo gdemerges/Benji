@@ -6,7 +6,16 @@ pour ne jamais lever — un raccourci absent est une gêne, une app qui ne déma
 pas est une panne.
 """
 
-from benji.hotkeys import GlobalHotkeys, parse_shortcut
+import benji.hotkeys as hotkeys_mod
+from benji.hotkeys import (
+    GlobalHotkeys,
+    LinuxHotkeys,
+    WindowsHotkeys,
+    build_hotkeys,
+    parse_shortcut,
+    parse_shortcut_windows,
+    parse_shortcut_x11,
+)
 
 CMD, SHIFT, ALT, CTRL = 0x0100, 0x0200, 0x0800, 0x1000
 
@@ -50,3 +59,99 @@ def test_carbon_indisponible_degrade_en_silence(monkeypatch):
 
     assert hotkeys.register("Ctrl+Alt+Cmd+B", lambda: None) is False
     hotkeys.unregister_all()  # ne doit pas lever non plus
+
+
+# --- Windows : RegisterHotKey ---
+
+WIN_ALT, WIN_CTRL, WIN_SHIFT, WIN_CMD = 0x0001, 0x0002, 0x0004, 0x0008
+
+
+def test_windows_combinaison_complete():
+    assert parse_shortcut_windows("Ctrl+Alt+Cmd+B") == (ord("B"), WIN_CTRL | WIN_ALT | WIN_CMD)
+
+
+def test_windows_meme_tokenizer_que_carbon():
+    """Le partage du tokenizer se vérifie par les mêmes refus."""
+    assert parse_shortcut_windows("") is None
+    assert parse_shortcut_windows("Ctrl+") is None
+    assert parse_shortcut_windows("B") is None  # sans modificateur
+    assert parse_shortcut_windows("Ctrl+A+B") is None
+
+
+def test_windows_hotkeys_hors_windows_ne_fait_rien():
+    assert WindowsHotkeys().register("Ctrl+Alt+Cmd+B", lambda: None) is False
+
+
+def test_windows_combinaison_illisible_ne_leve_pas(monkeypatch):
+    monkeypatch.setattr(hotkeys_mod, "IS_WINDOWS", True)
+
+    assert WindowsHotkeys().register("Ctrl+Nope", lambda: None) is False
+
+
+def test_windows_user32_indisponible_degrade_en_silence(monkeypatch):
+    """Sur ce poste (macOS), `ctypes.windll` n'existe pas : exactement le cas
+    que ce garde-fou doit couvrir sur une vraie machine Windows sans DLL."""
+    monkeypatch.setattr(hotkeys_mod, "IS_WINDOWS", True)
+
+    hotkeys = WindowsHotkeys()
+    assert hotkeys.register("Ctrl+Alt+Cmd+B", lambda: None) is False
+    hotkeys.unregister_all()  # ne doit pas lever non plus
+
+
+# --- Linux/X11 : XGrabKey ---
+
+X11_SHIFT, X11_CTRL, X11_ALT, X11_CMD = 1, 4, 8, 64
+
+
+def test_x11_combinaison_complete():
+    assert parse_shortcut_x11("Ctrl+Alt+Cmd+B") == ("b", X11_CTRL | X11_ALT | X11_CMD)
+
+
+def test_x11_touches_speciales():
+    assert parse_shortcut_x11("Ctrl+F5") == ("F5", X11_CTRL)
+    assert parse_shortcut_x11("Ctrl+Escape") == ("Escape", X11_CTRL)
+
+
+def test_x11_meme_tokenizer_que_carbon():
+    assert parse_shortcut_x11("") is None
+    assert parse_shortcut_x11("B") is None
+    assert parse_shortcut_x11("Ctrl+A+B") is None
+
+
+def test_linux_hotkeys_hors_linux_ne_fait_rien():
+    assert LinuxHotkeys().register("Ctrl+Alt+Cmd+B", lambda: None) is False
+
+
+def test_linux_combinaison_illisible_ne_leve_pas(monkeypatch):
+    monkeypatch.setattr(hotkeys_mod, "IS_LINUX", True)
+
+    assert LinuxHotkeys().register("Ctrl+Nope", lambda: None) is False
+
+
+def test_x11_indisponible_degrade_en_silence(monkeypatch):
+    """Couvre aussi bien Xlib absente qu'une session Wayland pure (`_load`
+    rend None dans les deux cas, cf. sa docstring)."""
+    monkeypatch.setattr(hotkeys_mod, "IS_LINUX", True)
+
+    hotkeys = LinuxHotkeys()
+    monkeypatch.setattr(hotkeys, "_load", lambda: None)
+
+    assert hotkeys.register("Ctrl+Alt+Cmd+B", lambda: None) is False
+    hotkeys.unregister_all()  # ne doit pas lever non plus
+
+
+# --- sélection par OS ---
+
+
+def test_build_hotkeys_choisit_selon_l_os(monkeypatch):
+    monkeypatch.setattr(hotkeys_mod, "IS_WINDOWS", True)
+    monkeypatch.setattr(hotkeys_mod, "IS_LINUX", False)
+    assert isinstance(build_hotkeys(), WindowsHotkeys)
+
+    monkeypatch.setattr(hotkeys_mod, "IS_WINDOWS", False)
+    monkeypatch.setattr(hotkeys_mod, "IS_LINUX", True)
+    assert isinstance(build_hotkeys(), LinuxHotkeys)
+
+    monkeypatch.setattr(hotkeys_mod, "IS_WINDOWS", False)
+    monkeypatch.setattr(hotkeys_mod, "IS_LINUX", False)
+    assert isinstance(build_hotkeys(), GlobalHotkeys)

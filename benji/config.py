@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 IS_MACOS = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
 
 
 def _default_font() -> str:
