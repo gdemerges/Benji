@@ -17,8 +17,8 @@ def window(qtbot, tmp_path, monkeypatch):
     return w
 
 
-def test_trois_etapes_dans_l_ordre(window):
-    assert window.pages.count() == 3
+def test_quatre_etapes_dans_l_ordre(window):
+    assert window.pages.count() == 4
     assert window.pages.currentIndex() == 0
     assert window.next_btn.text() == "Commencer"
     assert window.back_btn.isHidden()
@@ -28,7 +28,21 @@ def test_trois_etapes_dans_l_ordre(window):
     assert window.next_btn.text() == "Continuer"
 
     window._next()
+    assert window.pages.currentIndex() == 2
+    assert window.next_btn.text() == "Continuer"
+
+    window._next()
+    assert window.pages.currentIndex() == 3
     assert window.next_btn.text() == "Terminer"
+
+
+def test_l_offre_gratuite_est_la_seule_active(window):
+    """Le payant n'existe pas encore : ce n'est pas un vrai choix aujourd'hui,
+    juste une annonce de ce qui viendra."""
+    assert window.offer_free.isChecked()
+    assert not window.offer_free.isEnabled()
+    assert not window.offer_cloud.isChecked()
+    assert not window.offer_cloud.isEnabled()
 
 
 def test_l_ecran_des_modeles_annonce_la_taille(window):
@@ -69,7 +83,7 @@ def test_un_accord_ferme_l_etape(window):
 def test_terminer_pose_le_marqueur(window, tmp_path, monkeypatch):
     marker = tmp_path / onboarding.MARKER_NAME
     monkeypatch.setattr(onboarding, "marker_path", lambda: marker)
-    window.pages.setCurrentIndex(2)
+    window.pages.setCurrentIndex(3)
 
     window._next()
 
@@ -78,7 +92,7 @@ def test_terminer_pose_le_marqueur(window, tmp_path, monkeypatch):
 
 def test_on_ne_peut_pas_sortir_pendant_un_telechargement(window):
     """Quitter au milieu laisserait un cache à moitié écrit."""
-    window.pages.setCurrentIndex(2)
+    window.pages.setCurrentIndex(3)
     window._downloader = object()
     window._refresh_nav()
 
@@ -86,7 +100,7 @@ def test_on_ne_peut_pas_sortir_pendant_un_telechargement(window):
 
 
 def test_un_telechargement_en_echec_propose_de_reessayer(window):
-    window.pages.setCurrentIndex(2)
+    window.pages.setCurrentIndex(3)
     window._on_download_done("réseau injoignable")
 
     assert "réseau injoignable" in window.progress_label.text()

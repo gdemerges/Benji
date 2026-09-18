@@ -19,6 +19,7 @@ import logging
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -66,6 +67,7 @@ class OnboardingWindow(QDialog):
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_welcome())
+        self.pages.addWidget(self._build_offer())
         self.pages.addWidget(self._build_microphone())
         self.pages.addWidget(self._build_models())
 
@@ -125,6 +127,41 @@ class OnboardingWindow(QDialog):
         layout.addWidget(self.welcome_lede)
         layout.addSpacing(8)
         layout.addWidget(self.welcome_body)
+        layout.addStretch(1)
+        return page
+
+    def _build_offer(self) -> QWidget:
+        """Gratuit (local) et/ou payant (cloud) — le payant n'existe pas encore.
+
+        Seul le gratuit transcrit aujourd'hui : la case est cochée et
+        verrouillée plutôt que présentée comme un vrai choix qu'on pourrait
+        décocher pour se retrouver sans rien. Le payant reste visible pour
+        que l'offre à venir ne surprenne personne, sans promettre un achat
+        qui échouerait (Stripe n'est pas en ligne).
+        """
+        page = QWidget()
+        self.offer_title = QLabel("Comment transcrire vos réunions ?")
+        self.offer_body = QLabel(
+            "Gratuit, en local : le moteur tourne sur cet ordinateur, rien ne "
+            "sort de la machine. C'est le mode de Benji aujourd'hui.\n\n"
+            "Payant, via le cloud Benji : une meilleure qualité, quel que "
+            "soit l'ordinateur. Pas encore disponible."
+        )
+        self.offer_body.setWordWrap(True)
+
+        self.offer_free = QCheckBox("Gratuit — transcription locale")
+        self.offer_free.setChecked(True)
+        self.offer_free.setEnabled(False)
+        self.offer_cloud = QCheckBox("Payant — cloud Benji (bientôt disponible)")
+        self.offer_cloud.setEnabled(False)
+
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self.offer_title)
+        layout.addWidget(self.offer_body)
+        layout.addSpacing(6)
+        layout.addWidget(self.offer_free)
+        layout.addWidget(self.offer_cloud)
         layout.addStretch(1)
         return page
 
@@ -352,14 +389,20 @@ class OnboardingWindow(QDialog):
             f"font-family: {FONT_DISPLAY}; font-size: 26px; font-weight: 600; "
             f"letter-spacing: -0.4px; color: {_rgba(t.ink)}; background: transparent;"
         )
-        for label in (self.welcome_title, self.mic_title, self.models_title):
+        for label in (self.welcome_title, self.offer_title, self.mic_title, self.models_title):
             label.setStyleSheet(title_qss)
         body_qss = (
             f"font-family: {FONT_UI}; font-size: 13px; color: {_rgba(t.ink_muted)}; "
             "background: transparent;"
         )
-        for label in (self.welcome_body, self.mic_body, self.models_body):
+        for label in (self.welcome_body, self.offer_body, self.mic_body, self.models_body):
             label.setStyleSheet(body_qss)
+        checkbox_qss = (
+            f"font-family: {FONT_UI}; font-size: 13px; color: {_rgba(t.ink)}; "
+            "background: transparent;"
+        )
+        for box in (self.offer_free, self.offer_cloud):
+            box.setStyleSheet(checkbox_qss)
         self.welcome_lede.setStyleSheet(
             f"font-family: {FONT_UI}; font-size: 15px; color: {_rgba(t.ink)}; "
             "background: transparent;"
